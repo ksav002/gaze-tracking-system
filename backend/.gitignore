@@ -1,0 +1,90 @@
+# Python
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+
+venv/
+.env/
+.venv/
+env/
+
+# Django stuff
+
+*.log
+*.pot
+*.pyc
+db.sqlite3
+db.sqlite3-journal
+media/
+
+# Static files (optional — depends on setup)
+
+staticfiles/
+
+# Environment variables
+
+.env
+.env.*
+
+# Migrations (optional — usually keep them!)
+
+# */migrations/*
+
+# !*/migrations/**init**.py
+
+# IDEs / Editors
+
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+
+.DS_Store
+Thumbs.db
+
+# Testing / coverage
+
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# mypy / type checking
+
+.mypy_cache/
+.dmypy.json
+
+# Node (if using frontend tooling)
+
+node_modules/
+
+# Celery / async
+
+celerybeat-schedule
+celerybeat.pid
+
+# Docker (optional)
+
+*.env
+docker-compose.override.yml
+
+# Logs
+
+logs/
+*.log
+
+# Gunicorn
+
+gunicorn.pid
+
+# Build artifacts
+
+dist/
+build/
+*.egg-info/
