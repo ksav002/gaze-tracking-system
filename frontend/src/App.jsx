@@ -8,7 +8,9 @@ import { ToastContainer } from "react-toastify";
 import "react-toastify/dist/ReactToastify.css";
 
 function ProtectedRoute({ children }) {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, loading } = useAuth();
+
+  if (loading) return null;
 
   return isAuthenticated ? children : <Navigate to="/login" replace />;
 }
@@ -43,11 +45,13 @@ function App() {
             </ProtectedRoute>
           }
         >
-          {routes.map(({ path, element }) => (
-            <Route key={path} path={path} element={element} />
-          ))}
-
-          <Route index element={<Navigate to={routes?.[0]?.path || "/"} />} />
+          {routes.map((r, i) =>
+            r.index ? (
+              <Route key={i} index element={r.element} />
+            ) : (
+              <Route key={i} path={r.path} element={r.element} />
+            ),
+          )}
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>

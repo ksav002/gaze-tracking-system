@@ -8,7 +8,7 @@ const routes = [
   {
     path: "calibration",
     element: <Calibration />,
-    nav: true,
+    nav: false,
     label: "Calibration",
   },
 ];

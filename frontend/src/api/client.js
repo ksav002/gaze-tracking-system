@@ -58,11 +58,10 @@ api.interceptors.response.use(
         originalRequest.headers.Authorization = `Bearer ${newAccess}`;
         return api(originalRequest);
       }
-    }
 
-    localStorage.removeItem("access");
-    localStorage.removeItem("refresh");
-    // window.location.href = "/login";
+      localStorage.removeItem("access");
+      localStorage.removeItem("refresh");
+    }
 
     return Promise.reject(error);
   },
