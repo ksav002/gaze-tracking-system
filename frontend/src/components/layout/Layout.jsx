@@ -1,6 +1,7 @@
 import { Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
-import { Link } from "react-router-dom";
+import routes from "../../routes/routes";
+import { NavLink } from "react-router-dom";
 
 const Layout = () => {
   const { user, logout } = useAuth();
@@ -26,12 +27,19 @@ const Layout = () => {
         </div>
 
         <nav className="nav flex-column">
-          <Link to="/" className="nav-link text-white">
-            Dashboard
-          </Link>
-          <Link to="/profile" className="nav-link text-white">
-            Profile
-          </Link>
+          {routes
+            .filter((r) => r.nav)
+            .map((r) => (
+              <NavLink
+                key={r.path}
+                to={r.path || "/"}
+                className={({ isActive }) =>
+                  `nav-link ${isActive ? "active bg-primary text-white" : "text-white"}`
+                }
+              >
+                {r.label}
+              </NavLink>
+            ))}
         </nav>
 
         <div className="mt-auto">
