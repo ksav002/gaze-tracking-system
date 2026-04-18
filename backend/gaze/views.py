@@ -1,13 +1,11 @@
 import numpy as np
+from cv.calibration import GazeCalibrationModel
 from gaze.serializers import RegisterSerializer
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from sklearn.linear_model import LinearRegression
-from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import PolynomialFeatures
 
 from .models import CalibrationProfile
 from .serializers import CalibrationInputSerializer
@@ -18,11 +16,9 @@ class RegisterView(APIView):
 
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
-
         if serializer.is_valid():
-            user = serializer.save()
+            serializer.save()
             return Response({"message": "User created"}, status=201)
-
         return Response(serializer.errors, status=400)
 
 
@@ -30,13 +26,7 @@ class RegisterView(APIView):
 @permission_classes([IsAuthenticated])
 def me(request):
     user = request.user
-    return Response(
-        {
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-        }
-    )
+    return Response({"id": user.id, "username": user.username, "email": user.email})
 
 
 class CalibrationView(APIView):
@@ -50,42 +40,21 @@ class CalibrationView(APIView):
         samples = serializer.validated_data["samples"]
 
         try:
-            # Build input (raw gaze) and output (screen dot) arrays
-            gaze_coords = np.array([[s["gaze_x"], s["gaze_y"]] for s in samples])
-            dot_coords = np.array([[s["dot_x"], s["dot_y"]] for s in samples])
+            gaze_coords = np.array([s["gaze"] for s in samples])
+            dot_coords = np.array([s["target"] for s in samples])
 
-            # Fit two separate models: one for X, one for Y
-            model_x = make_pipeline(PolynomialFeatures(degree=2), LinearRegression())
-            model_y = make_pipeline(PolynomialFeatures(degree=2), LinearRegression())
+            cal = GazeCalibrationModel(degree=2)
+            cal.fit(gaze_coords, dot_coords)
 
-            model_x.fit(gaze_coords, dot_coords[:, 0])
-            model_y.fit(gaze_coords, dot_coords[:, 1])
+            coefficients = cal.to_dict()
 
-            # Extract coefficients to store as JSON
-            coefficients = {
-                "x": {
-                    "coef": model_x.named_steps["linearregression"].coef_.tolist(),
-                    "intercept": float(
-                        model_x.named_steps["linearregression"].intercept_
-                    ),
-                },
-                "y": {
-                    "coef": model_y.named_steps["linearregression"].coef_.tolist(),
-                    "intercept": float(
-                        model_y.named_steps["linearregression"].intercept_
-                    ),
-                },
-                "poly_degree": 2,
-            }
-
-            # Save or update CalibrationProfile for this user
             profile, created = CalibrationProfile.objects.update_or_create(
                 user=request.user, defaults={"coefficients": coefficients}
             )
 
             return Response(
                 {
-                    "message": "Calibration saved successfully.",
+                    "message": "Calibration saved.",
                     "created": created,
                     "updated_at": profile.updated_at,
                 },
@@ -99,7 +68,6 @@ class CalibrationView(APIView):
             )
 
     def get(self, request):
-        """Return current user's calibration coefficients."""
         try:
             profile = CalibrationProfile.objects.get(user=request.user)
             return Response(
@@ -111,3 +79,10 @@ class CalibrationView(APIView):
             )
         except CalibrationProfile.DoesNotExist:
             return Response({"calibrated": False})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def calibration_status(request):
+    exists = CalibrationProfile.objects.filter(user=request.user).exists()
+    return Response({"active": exists})

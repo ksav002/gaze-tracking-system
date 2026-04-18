@@ -2,6 +2,8 @@ import json
 
 from channels.generic.websocket import AsyncWebsocketConsumer
 
+REQUIRED_KEYS = {"face_detected"}
+
 
 class GazeConsumer(AsyncWebsocketConsumer):
     async def connect(self):
@@ -14,19 +16,33 @@ class GazeConsumer(AsyncWebsocketConsumer):
         print(f"[GazeConsumer] Client disconnected: {self.channel_name}")
 
     async def receive(self, text_data):
-        """Forward messages from CV service to all frontend clients."""
         try:
             data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return
+
+        msg_type = data.get("type")
+
+        # Control messages: broadcast to group so cv_service receives them
+        if msg_type in ("start_camera", "stop_camera"):
             await self.channel_layer.group_send(
                 "gaze_stream",
-                {
-                    "type": "gaze.message",
-                    "data": data,
-                },
+                {"type": "gaze.message", "data": data},
             )
-        except json.JSONDecodeError:
-            pass
+            return
+
+        # Gaze packets from cv_service: validate then broadcast to frontend
+        if not isinstance(data, dict) or not REQUIRED_KEYS.issubset(data.keys()):
+            print(f"[GazeConsumer] Malformed packet dropped: {data}")
+            return
+
+        await self.channel_layer.group_send(
+            "gaze_stream",
+            {"type": "gaze.message", "data": data},
+        )
 
     async def gaze_message(self, event):
-        """Send gaze data to WebSocket client (frontend)."""
-        await self.send(text_data=json.dumps(event["data"]))
+        try:
+            await self.send(text_data=json.dumps(event["data"]))
+        except Exception:
+            pass

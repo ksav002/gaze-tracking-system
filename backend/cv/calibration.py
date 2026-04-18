@@ -73,7 +73,7 @@ class GazeCalibrationModel:
     @classmethod
     def from_dict(cls, data: dict) -> "GazeCalibrationModel":
         """Reconstructs a calibration model from stored coefficient dict."""
-        model = cls(degree=data["degree"])
+        model = cls(degree=data.get("poly_degree", 2))
 
         def restore(coef, intercept):
             pipe = Pipeline(
