@@ -1,36 +1,71 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useGazeSocket } from "../hooks/useGazeSocket";
 import GazeCursor from "../components/GazeCursor";
 
-const Dashboard = () => {
-  const { user } = useAuth();
+// ── Viewport dimensions — what the browser actually renders into ─────────────
+// window.innerWidth/Height excludes the OS taskbar and browser chrome,
+// giving the correct coordinate space that matches what cv_service maps to.
+function getViewport() {
+  return { w: window.innerWidth, h: window.innerHeight };
+}
+
+const NAV_ITEMS = [
+  { label: "Dashboard", to: "/dashboard" },
+  { label: "Calibrate", to: "/calibration" },
+  { label: "Heatmap", to: "/heatmap" },
+  { label: "Profile", to: "/profile" },
+];
+
+export default function Dashboard() {
+  const { user, logout } = useAuth();
   const {
     isConnected,
     isFaceDetected,
     isCalibrated,
     gazePoint,
     dwellProgress,
-    shouldClick,
     startCamera,
     stopCamera,
   } = useGazeSocket();
 
   const [cameraOn, setCameraOn] = useState(false);
+  const [viewport, setViewport] = useState(getViewport);
+  const vpRef = useRef(getViewport());
 
-  const toggleCamera = () => {
+  // Keep viewport in sync and pass accurate dimensions to cv_service via
+  // a data attribute so the parent app can read them if needed
+  useEffect(() => {
+    const update = () => {
+      const vp = getViewport();
+      setViewport(vp);
+      vpRef.current = vp;
+    };
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, []);
+
+  const toggle = () => {
     if (cameraOn) {
       stopCamera();
       setCameraOn(false);
     } else {
-      startCamera();
+      // Pass current viewport to cv_service via a custom WS message
+      // so it maps gaze to the actual renderable area, not full screen res
+      startCamera(vpRef.current.w, vpRef.current.h);
       setCameraOn(true);
     }
   };
 
+  const statusItems = [
+    { label: "WebSocket", active: isConnected },
+    { label: "Face", active: isFaceDetected },
+    { label: "Calibrated", active: isCalibrated },
+  ];
+
   return (
-    <div style={styles.root}>
-      {/* Gaze cursor — always rendered, only visible when face detected */}
+    <div style={s.root}>
       <GazeCursor
         x={gazePoint.x}
         y={gazePoint.y}
@@ -38,65 +73,99 @@ const Dashboard = () => {
         visible={cameraOn && isFaceDetected}
       />
 
-      <div style={styles.content}>
-        {/* Header */}
-        <div style={styles.header}>
+      {/* Sidebar */}
+      <aside style={s.sidebar}>
+        <div style={s.logo}>
+          <EyeIcon />
+          <span style={s.logoText}>GazeTrack</span>
+        </div>
+
+        <nav style={s.nav}>
+          {NAV_ITEMS.map((item) => (
+            <Link
+              key={item.to}
+              to={item.to}
+              style={s.navLink}
+              className="nav-link"
+            >
+              {item.label}
+            </Link>
+          ))}
+        </nav>
+
+        <button style={s.logoutBtn} onClick={logout}>
+          Sign out
+        </button>
+      </aside>
+
+      {/* Main */}
+      <main style={s.main}>
+        {/* Top bar */}
+        <div style={s.topbar}>
           <div>
-            <h2 style={styles.title}>Dashboard</h2>
-            <p style={styles.subtitle}>Welcome back, {user?.username}</p>
+            <h1 style={s.pageTitle}>Dashboard</h1>
+            <p style={s.pageSubtitle}>
+              Viewport {viewport.w} × {viewport.h}px
+            </p>
           </div>
           <button
             style={{
-              ...styles.btn,
+              ...s.trackBtn,
               background: cameraOn ? "#ff6363" : "#63ffb4",
             }}
-            onClick={toggleCamera}
+            onClick={toggle}
             disabled={!isConnected}
           >
-            {cameraOn ? "Stop Tracking" : "Start Tracking"}
+            {cameraOn ? "Stop tracking" : "Start tracking"}
           </button>
         </div>
 
-        {/* Status row */}
-        <div style={styles.statusRow}>
-          <StatusPill label="WebSocket" active={isConnected} />
-          <StatusPill label="Face" active={isFaceDetected} />
-          <StatusPill label="Calibrated" active={isCalibrated} />
+        {/* Status pills */}
+        <div style={s.pills}>
+          {statusItems.map(({ label, active }) => (
+            <StatusPill key={label} label={label} active={active} />
+          ))}
         </div>
 
-        {/* Gaze coords */}
-        {cameraOn && isFaceDetected && (
-          <div style={styles.gazeBox}>
-            <span style={styles.gazeLabel}>Gaze</span>
-            <span style={styles.gazeVal}>
-              x: {Math.round(gazePoint.x)}px &nbsp; y: {Math.round(gazePoint.y)}
-              px
-            </span>
+        {/* Gaze readout */}
+        {cameraOn && (
+          <div style={s.readout}>
+            <div style={s.readoutGrid}>
+              <Metric label="X" value={`${Math.round(gazePoint.x)}px`} />
+              <Metric label="Y" value={`${Math.round(gazePoint.y)}px`} />
+              <Metric
+                label="Face"
+                value={isFaceDetected ? "detected" : "—"}
+                dim={!isFaceDetected}
+              />
+              <Metric
+                label="Dwell"
+                value={`${Math.round(dwellProgress * 100)}%`}
+              />
+            </div>
             {!isCalibrated && (
-              <span style={styles.warn}>
-                ⚠ Not calibrated — gaze position is approximate
-              </span>
+              <div style={s.warn}>
+                ⚠ Not calibrated — run calibration for accurate tracking
+              </div>
             )}
           </div>
         )}
 
         {!isConnected && (
-          <p style={styles.warn}>
-            CV service offline — start cv_service.py first
-          </p>
+          <div style={s.warn}>CV service offline — run cv_service.py first</div>
         )}
-      </div>
+      </main>
     </div>
   );
-};
+}
 
 function StatusPill({ label, active }) {
   return (
     <div
       style={{
-        ...styles.pill,
-        background: active ? "rgba(99,255,180,0.12)" : "rgba(255,255,255,0.05)",
-        border: `1px solid ${active ? "#63ffb4" : "rgba(255,255,255,0.1)"}`,
+        ...s.pill,
+        borderColor: active ? "rgba(99,255,180,0.3)" : "rgba(255,255,255,0.06)",
+        background: active ? "rgba(99,255,180,0.06)" : "transparent",
       }}
     >
       <div
@@ -104,15 +173,15 @@ function StatusPill({ label, active }) {
           width: 6,
           height: 6,
           borderRadius: "50%",
-          background: active ? "#63ffb4" : "#555",
-          boxShadow: active ? "0 0 6px #63ffb4" : "none",
+          background: active ? "#63ffb4" : "#333",
+          boxShadow: active ? "0 0 8px #63ffb4" : "none",
         }}
       />
       <span
         style={{
-          fontSize: 12,
-          color: active ? "#63ffb4" : "rgba(255,255,255,0.3)",
-          letterSpacing: "0.06em",
+          fontSize: 11,
+          color: active ? "#63ffb4" : "rgba(255,255,255,0.2)",
+          letterSpacing: "0.08em",
         }}
       >
         {label.toUpperCase()}
@@ -121,61 +190,149 @@ function StatusPill({ label, active }) {
   );
 }
 
-const styles = {
+function Metric({ label, value, dim }) {
+  return (
+    <div style={s.metric}>
+      <span style={s.metricLabel}>{label}</span>
+      <span style={{ ...s.metricVal, opacity: dim ? 0.3 : 1 }}>{value}</span>
+    </div>
+  );
+}
+
+function EyeIcon() {
+  return (
+    <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
+      <ellipse
+        cx="16"
+        cy="16"
+        rx="13"
+        ry="8"
+        stroke="#63ffb4"
+        strokeWidth="1.5"
+      />
+      <circle cx="16" cy="16" r="4" fill="#63ffb4" opacity="0.9" />
+      <circle cx="17.5" cy="14.5" r="1.2" fill="#0a0c10" />
+    </svg>
+  );
+}
+
+const s = {
   root: {
+    display: "flex",
     minHeight: "100vh",
-    background: "#0a0c10",
+    background: "#070910",
     fontFamily: "'DM Mono','Fira Mono',monospace",
-    position: "relative",
+    color: "#f0f0f0",
   },
-  content: { maxWidth: 800, margin: "0 auto", padding: "48px 24px" },
-  header: {
+  sidebar: {
+    width: 200,
+    flexShrink: 0,
+    borderRight: "1px solid rgba(255,255,255,0.05)",
+    padding: "28px 20px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 0,
+  },
+  logo: { display: "flex", alignItems: "center", gap: 8, marginBottom: 40 },
+  logoText: {
+    fontSize: 13,
+    fontWeight: 700,
+    color: "#63ffb4",
+    letterSpacing: "0.06em",
+  },
+  nav: { display: "flex", flexDirection: "column", gap: 2, flex: 1 },
+  navLink: {
+    display: "block",
+    padding: "9px 12px",
+    fontSize: 12,
+    color: "rgba(255,255,255,0.4)",
+    textDecoration: "none",
+    borderRadius: 7,
+    letterSpacing: "0.04em",
+    transition: "color 0.2s, background 0.2s",
+  },
+  logoutBtn: {
+    marginTop: 24,
+    background: "transparent",
+    border: "1px solid rgba(255,255,255,0.07)",
+    borderRadius: 7,
+    padding: "8px 12px",
+    fontSize: 11,
+    color: "rgba(255,255,255,0.25)",
+    cursor: "pointer",
+    letterSpacing: "0.04em",
+    textAlign: "left",
+  },
+  main: { flex: 1, padding: "40px 48px" },
+  topbar: {
     display: "flex",
     justifyContent: "space-between",
     alignItems: "flex-start",
     marginBottom: 32,
   },
-  title: { color: "#f0f0f0", fontSize: 24, fontWeight: 600, margin: 0 },
-  subtitle: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 13,
+  pageTitle: {
+    fontSize: 22,
+    fontWeight: 600,
+    margin: 0,
+    letterSpacing: "-0.02em",
+  },
+  pageSubtitle: {
+    fontSize: 11,
+    color: "rgba(255,255,255,0.2)",
     margin: "4px 0 0",
   },
-  btn: {
-    padding: "10px 24px",
+  trackBtn: {
+    padding: "10px 22px",
     border: "none",
     borderRadius: 8,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",
-    color: "#0a0c10",
-    letterSpacing: "0.04em",
-    transition: "background 0.2s",
+    color: "#070910",
+    letterSpacing: "0.05em",
+    transition: "opacity 0.2s",
   },
-  statusRow: { display: "flex", gap: 12, marginBottom: 32, flexWrap: "wrap" },
+  pills: { display: "flex", gap: 10, marginBottom: 32, flexWrap: "wrap" },
   pill: {
     display: "flex",
     alignItems: "center",
-    gap: 6,
+    gap: 7,
     padding: "6px 14px",
     borderRadius: 20,
+    border: "1px solid",
   },
-  gazeBox: {
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.08)",
+  readout: {
+    background: "rgba(255,255,255,0.02)",
+    border: "1px solid rgba(255,255,255,0.06)",
     borderRadius: 12,
-    padding: "20px 24px",
+    padding: "24px 28px",
     display: "flex",
     flexDirection: "column",
-    gap: 8,
+    gap: 16,
   },
-  gazeLabel: {
-    color: "rgba(255,255,255,0.3)",
-    fontSize: 11,
+  readoutGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(4,1fr)",
+    gap: 20,
+  },
+  metric: { display: "flex", flexDirection: "column", gap: 4 },
+  metricLabel: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.25)",
     letterSpacing: "0.1em",
+    textTransform: "uppercase",
   },
-  gazeVal: { color: "#f0f0f0", fontSize: 20, fontFamily: "monospace" },
-  warn: { color: "#ffb347", fontSize: 12, margin: 0 },
+  metricVal: {
+    fontSize: 18,
+    fontWeight: 600,
+    fontVariantNumeric: "tabular-nums",
+  },
+  warn: {
+    fontSize: 11,
+    color: "#ffb347",
+    background: "rgba(255,179,71,0.06)",
+    border: "1px solid rgba(255,179,71,0.15)",
+    borderRadius: 6,
+    padding: "8px 12px",
+  },
 };
-
-export default Dashboard;

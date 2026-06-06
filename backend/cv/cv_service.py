@@ -12,6 +12,9 @@ from gaze_processor import process_frame
 DJANGO_API_BASE = "http://localhost:8000/api"
 DJANGO_WS_URL = "ws://localhost:8000/ws/gaze/"
 
+EMA_ALPHA = 0.08  # Very smooth — raise to 0.15 if it feels too laggy
+EAR_BLINK_THRESHOLD = 0.015  # EAR below this = eyes closed, suppress gaze
+
 
 def fetch_calibration(token: str):
     try:
@@ -23,7 +26,13 @@ def fetch_calibration(token: str):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("calibrated"):
-                return GazeCalibrationModel.from_dict(data["coefficients"])
+                model = GazeCalibrationModel.from_dict(data["coefficients"])
+                print("[cv_service] calibration loaded OK")
+                return model
+            else:
+                print("[cv_service] no calibration on server yet")
+        else:
+            print(f"[cv_service] calibration fetch HTTP {resp.status_code}")
     except Exception as e:
         print("[cv_service] calibration fetch error:", e)
     return None
@@ -54,29 +63,26 @@ def open_camera(preferred=1):
 async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
     ws_url = f"{DJANGO_WS_URL}?token={token}"
 
-    fixation_detector = FixationDetector()
+    fixation_detector = FixationDetector(dispersion_threshold=80)
     dwell_timer = DwellTimer()
 
     cap = None
     camera_active = False
     cal_model = None
 
-    # Queue decouples the receiver task from the main loop
-    # so no control message is ever dropped regardless of
-    # how long process_frame() or cap.read() takes
+    smoothed_x: float | None = None
+    smoothed_y: float | None = None
+
     control_queue = asyncio.Queue()
 
     async def receiver(ws):
-        """Dedicated task: reads all incoming WS messages into the queue."""
         try:
             async for raw in ws:
                 try:
                     msg = json.loads(raw)
-                    msg_type = msg.get("type")
-                    if msg_type in ("start_camera", "stop_camera"):
-                        print(f"[cv_service] queued control: {msg_type}")
+                    if msg.get("type") in ("start_camera", "stop_camera"):
+                        print(f"[cv_service] queued control: {msg.get('type')}")
                         await control_queue.put(msg)
-                    # gaze packets echoed back from the group — ignore
                 except json.JSONDecodeError:
                     pass
         except websockets.ConnectionClosed:
@@ -84,38 +90,40 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
 
     async with websockets.connect(ws_url) as ws:
         print("[cv_service] connected, waiting for start_camera...")
-
-        # Start receiver as a background task — runs independently
         recv_task = asyncio.create_task(receiver(ws))
 
         try:
             while True:
-                # Drain all pending control messages before processing a frame
                 while not control_queue.empty():
                     msg = control_queue.get_nowait()
                     msg_type = msg.get("type")
 
                     if msg_type == "start_camera" and not camera_active:
-                        print("[cv_service] start_camera received — opening camera")
+                        print("[cv_service] start_camera — opening camera")
                         cal_model = fetch_calibration(token)
                         cap = open_camera()
                         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                         camera_active = True
-                        print("[cv_service] camera STARTED")
+                        smoothed_x = None
+                        smoothed_y = None
+                        print(
+                            "[cv_service] camera STARTED, calibrated:",
+                            cal_model is not None,
+                        )
 
                     elif msg_type == "stop_camera" and camera_active:
                         cap.release()
                         cap = None
                         camera_active = False
+                        smoothed_x = None
+                        smoothed_y = None
                         print("[cv_service] camera STOPPED")
 
-                # Idle — yield and wait briefly, receiver still runs
                 if not camera_active:
                     await asyncio.sleep(0.05)
                     continue
 
-                # Process frame
                 ret, frame = cap.read()
                 if not ret:
                     await asyncio.sleep(0.01)
@@ -129,13 +137,35 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
                     continue
 
                 gaze_vec = result["features"]
+                ear = gaze_vec[5]  # Eye Aspect Ratio is the 6th feature
 
+                # ── Blink suppression ────────────────────────────────────
+                # When EAR is very low the eye is closed — iris landmarks
+                # jump wildly so we suppress the packet entirely
+                if ear < EAR_BLINK_THRESHOLD:
+                    await ws.send(json.dumps({"face_detected": False}))
+                    await asyncio.sleep(0.033)
+                    continue
+
+                # ── Map to screen coords ─────────────────────────────────
                 if cal_model is not None:
                     sx, sy = cal_model.map_gaze_to_screen(gaze_vec, screen_w, screen_h)
                 else:
                     sx = int((gaze_vec[0] + 1) / 2 * screen_w)
                     sy = int((gaze_vec[1] + 1) / 2 * screen_h)
 
+                # ── EMA smoothing ────────────────────────────────────────
+                if smoothed_x is None:
+                    smoothed_x = float(sx)
+                    smoothed_y = float(sy)
+                else:
+                    smoothed_x = EMA_ALPHA * sx + (1 - EMA_ALPHA) * smoothed_x
+                    smoothed_y = EMA_ALPHA * sy + (1 - EMA_ALPHA) * smoothed_y
+
+                sx = int(smoothed_x)
+                sy = int(smoothed_y)
+
+                # ── Fixation & dwell ─────────────────────────────────────
                 is_fixation, centroid = fixation_detector.update(sx, sy)
                 should_click, dwell_progress = dwell_timer.update(
                     centroid if is_fixation else None

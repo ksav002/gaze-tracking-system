@@ -1,14 +1,15 @@
 import time
 from collections import deque
+
 import numpy as np
 
 # I-DT algorithm parameters
-DISPERSION_THRESHOLD_PX = 40    # Max spatial spread to classify as fixation
+DISPERSION_THRESHOLD_PX = 80  # Max spatial spread to classify as fixation
 MIN_FIXATION_DURATION_MS = 150  # Minimum window duration in milliseconds
 
 # Dwell-time parameters
-DEFAULT_DWELL_THRESHOLD_MS = 800   # Time to hold gaze before click fires
-DWELL_REGION_RADIUS_PX     = 30   # Max movement within same dwell region
+DEFAULT_DWELL_THRESHOLD_MS = 800  # Time to hold gaze before click fires
+DWELL_REGION_RADIUS_PX = 30  # Max movement within same dwell region
 
 
 class FixationDetector:
@@ -23,8 +24,8 @@ class FixationDetector:
         min_duration_ms: float = MIN_FIXATION_DURATION_MS,
     ):
         self.dispersion_threshold = dispersion_threshold
-        self.min_duration_ms      = min_duration_ms
-        self.buffer: deque        = deque()  # entries: (x, y, timestamp_ms)
+        self.min_duration_ms = min_duration_ms
+        self.buffer: deque = deque()  # entries: (x, y, timestamp_ms)
 
     def update(self, x: float, y: float) -> tuple[bool, tuple | None]:
         """
@@ -73,11 +74,11 @@ class DwellTimer:
         threshold_ms: float = DEFAULT_DWELL_THRESHOLD_MS,
         region_radius: float = DWELL_REGION_RADIUS_PX,
     ):
-        self.threshold_ms   = threshold_ms
-        self.region_radius  = region_radius
-        self._start_time    = None
+        self.threshold_ms = threshold_ms
+        self.region_radius = region_radius
+        self._start_time = None
         self._last_pt: tuple | None = None
-        self._fired         = False
+        self._fired = False
 
     def update(self, fixation_pt: tuple | None) -> tuple[bool, float]:
         """
@@ -104,11 +105,11 @@ class DwellTimer:
 
         if self._start_time is None:
             self._start_time = now_ms
-            self._fired      = False
+            self._fired = False
 
         self._last_pt = fixation_pt
-        elapsed       = now_ms - self._start_time
-        progress      = min(elapsed / self.threshold_ms, 1.0)
+        elapsed = now_ms - self._start_time
+        progress = min(elapsed / self.threshold_ms, 1.0)
 
         if elapsed >= self.threshold_ms and not self._fired:
             self._fired = True
@@ -118,8 +119,8 @@ class DwellTimer:
 
     def _reset(self):
         self._start_time = None
-        self._last_pt    = None
-        self._fired      = False
+        self._last_pt = None
+        self._fired = False
 
     @property
     def is_active(self) -> bool:
