@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import api from "../api/client.js";
+import api from "../api/client";
 
 // Colour map: black → purple → red → orange → yellow → white
 const COLORMAP = [
@@ -121,28 +121,49 @@ export default function HeatmapViewer() {
         {!sessionsError && sessions.length === 0 && (
           <p style={styles.empty}>No sessions recorded yet.</p>
         )}
-        {sessions.map((s) => (
-          <button
-            key={s.id}
-            style={{
-              ...styles.sessionBtn,
-              borderColor:
-                selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.08)",
-              color: selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.55)",
-            }}
-            onClick={() => setSelected(s.id)}
-          >
-            <span style={styles.sessionDate}>{fmtDate(s.started_at)}</span>
-            {s.ended_at && (
-              <span style={styles.sessionDuration}>
-                {Math.round(
-                  (new Date(s.ended_at) - new Date(s.started_at)) / 1000,
-                )}
-                s
-              </span>
-            )}
-          </button>
-        ))}
+        {(() => {
+          const ready = sessions.filter((s) => (s.point_count ?? 0) >= 5);
+          const sparse = sessions.filter((s) => (s.point_count ?? 0) < 5);
+          return (
+            <>
+              {ready.length === 0 && sessions.length > 0 && (
+                <p style={styles.empty}>No sessions with enough data yet.</p>
+              )}
+              {ready.map((s) => (
+                <button
+                  key={s.id}
+                  style={{
+                    ...styles.sessionBtn,
+                    borderColor:
+                      selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.08)",
+                    color:
+                      selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.55)",
+                  }}
+                  onClick={() => setSelected(s.id)}
+                >
+                  <span style={styles.sessionDate}>
+                    {fmtDate(s.started_at)}
+                  </span>
+                  {s.ended_at && (
+                    <span style={styles.sessionDuration}>
+                      {Math.round(
+                        (new Date(s.ended_at) - new Date(s.started_at)) / 1000,
+                      )}
+                      s{" · "}
+                      {s.point_count} pts
+                    </span>
+                  )}
+                </button>
+              ))}
+              {sparse.length > 0 && (
+                <p style={styles.footnote}>
+                  {sparse.length} session{sparse.length > 1 ? "s" : ""} hidden —
+                  fewer than 5 gaze points recorded
+                </p>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       <div style={styles.main}>
@@ -275,6 +296,13 @@ const styles = {
     margin: "0 0 16px",
   },
   empty: { fontSize: 12, color: "rgba(255,255,255,0.2)", margin: 0 },
+  footnote: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.15)",
+    margin: "12px 0 0",
+    lineHeight: 1.5,
+    fontStyle: "italic",
+  },
   sessionBtn: {
     background: "transparent",
     border: "1px solid",

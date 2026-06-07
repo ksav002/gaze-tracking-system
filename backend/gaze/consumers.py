@@ -60,6 +60,13 @@ class GazeConsumer(AsyncWebsocketConsumer):
             return
 
         # ── Gaze packets ─────────────────────────────────────────────────
+        # Camera error from cv_service — broadcast directly to frontend
+        if msg_type == "camera_error":
+            await self.channel_layer.group_send(
+                "gaze_stream", {"type": "gaze.message", "data": data}
+            )
+            return
+
         if not isinstance(data, dict) or not REQUIRED_KEYS.issubset(data.keys()):
             print(f"[GazeConsumer] Malformed packet dropped: {data}")
             return

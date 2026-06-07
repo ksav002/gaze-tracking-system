@@ -107,11 +107,15 @@ class SessionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        """Returns a summary list of all gaze sessions for the authenticated user."""
+        """Returns a summary list of all gaze sessions for the authenticated user.
+        Includes point_count so the frontend can filter sessions without a heatmap."""
+        from django.db.models import Count
+
         sessions = (
             GazeSession.objects.filter(user=request.user)
+            .annotate(point_count=Count("gaze_points"))
             .order_by("-started_at")
-            .values("id", "started_at", "ended_at", "page_url")
+            .values("id", "started_at", "ended_at", "page_url", "point_count")
         )
         return Response(list(sessions))
 

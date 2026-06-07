@@ -1,9 +1,13 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { postCalibration } from "../api/gaze";
 import { useGazeSocket } from "../hooks/useGazeSocket";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
 const SAMPLES_PER_DOT = 30;
+const SETTLE_DELAY_MS = 800; // wait after dot appears before collecting
+const TRANSITION_MS = 500; // dot travel animation duration
+const COUNTDOWN_SECS = 3;
 
 const DOTS_NORM = [
   [0.1, 0.1],
@@ -17,6 +21,7 @@ const DOTS_NORM = [
   [0.9, 0.9],
 ];
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 function dotPixels(norm, w, h) {
   return { x: norm[0] * w, y: norm[1] * h };
 }
@@ -32,21 +37,42 @@ function avg(samples) {
   return sum.map((v) => v / samples.length);
 }
 
+function useDims() {
+  const [dims, setDims] = useState({
+    w: window.innerWidth,
+    h: window.innerHeight,
+  });
+  useEffect(() => {
+    const handler = () =>
+      setDims({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+  return dims;
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 export default function Calibration() {
   const navigate = useNavigate();
-  const dims = { w: window.innerWidth, h: window.innerHeight };
+  const dims = useDims();
 
-  const { isConnected, rawMessage, startCamera, stopCamera } = useGazeSocket();
+  const { isConnected, isFaceDetected, rawMessage, startCamera, stopCamera } =
+    useGazeSocket();
 
+  // phase: idle | countdown | transition | settling | running | submitting | done | error
   const [phase, setPhase] = useState("idle");
   const [dotIndex, setDotIndex] = useState(0);
   const [collected, setCollected] = useState(0);
+  const [countdown, setCountdown] = useState(COUNTDOWN_SECS);
   const [errorMsg, setErrorMsg] = useState("");
+  const [dotVisible, setDotVisible] = useState(false); // for fade-in
 
+  // refs so effects always see current values without re-subscribing
+  const phaseRef = useRef("idle");
+  const dotIndexRef = useRef(0);
   const samplesRef = useRef([]);
   const dotSamplesRef = useRef([]);
-  const dotIndexRef = useRef(0);
-  const phaseRef = useRef("idle");
+  const collectingRef = useRef(false); // true only during "running" phase after settle
 
   useEffect(() => {
     phaseRef.current = phase;
@@ -55,10 +81,10 @@ export default function Calibration() {
     dotIndexRef.current = dotIndex;
   }, [dotIndex]);
 
-  // ── sample collection — react to each new rawMessage ──────────────────────
+  // ── Sample collection ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!rawMessage) return;
-    if (phaseRef.current !== "running") return;
+    if (!collectingRef.current) return;
     if (!rawMessage.face_detected) return;
 
     const gaze =
@@ -71,68 +97,122 @@ export default function Calibration() {
       dotSamplesRef.current.push(gaze);
       setCollected(dotSamplesRef.current.length);
     }
-  }, [rawMessage]); // fires on every new packet
+  }, [rawMessage]);
 
-  // ── advance dot ────────────────────────────────────────────────────────────
+  // ── Advance dot when enough samples collected ───────────────────────────────
   useEffect(() => {
     if (collected < SAMPLES_PER_DOT) return;
+    collectingRef.current = false;
 
     const idx = dotIndexRef.current;
     const { x, y } = dotPixels(DOTS_NORM[idx], dims.w, dims.h);
-    const newEntry = { gaze: avg(dotSamplesRef.current), target: [x, y] };
-
-    samplesRef.current = [...samplesRef.current, newEntry];
+    samplesRef.current = [
+      ...samplesRef.current,
+      { gaze: avg(dotSamplesRef.current), target: [x, y] },
+    ];
 
     const next = idx + 1;
     if (next >= DOTS_NORM.length) {
       setPhase("submitting");
-      submit(samplesRef.current);
+      submitCalibration(samplesRef.current);
     } else {
-      dotSamplesRef.current = [];
-      setCollected(0);
-      setDotIndex(next);
+      // Transition: fade out, move, settle, collect
+      setPhase("transition");
+      setDotVisible(false);
+
+      setTimeout(() => {
+        dotSamplesRef.current = [];
+        setCollected(0);
+        setDotIndex(next);
+
+        // Small delay so CSS position update fires, then fade in
+        setTimeout(() => {
+          setDotVisible(true);
+          setPhase("settling");
+
+          // Wait for user's eyes to land on new dot
+          setTimeout(() => {
+            collectingRef.current = true;
+            setPhase("running");
+          }, SETTLE_DELAY_MS);
+        }, 60);
+      }, TRANSITION_MS);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [collected]);
 
-  // ── submit ─────────────────────────────────────────────────────────────────
-  const submit = async (samples) => {
-    stopCamera();
-    try {
-      await postCalibration(
-        samples.map((s) => ({ gaze: s.gaze, target: s.target })),
-      );
-      setPhase("done");
-    } catch (err) {
-      const msg = err?.response?.data
-        ? JSON.stringify(err.response.data)
-        : err.message;
-      setErrorMsg(msg);
-      setPhase("error");
-    }
-  };
+  // ── Submit ──────────────────────────────────────────────────────────────────
+  const submitCalibration = useCallback(
+    async (samples) => {
+      stopCamera();
+      try {
+        await postCalibration(
+          samples.map((s) => ({ gaze: s.gaze, target: s.target })),
+        );
+        setPhase("done");
+      } catch (err) {
+        const msg = err?.response?.data
+          ? JSON.stringify(err.response.data)
+          : err.message;
+        setErrorMsg(msg);
+        setPhase("error");
+      }
+    },
+    [stopCamera],
+  );
 
+  // ── Countdown then begin ────────────────────────────────────────────────────
+  useEffect(() => {
+    if (phase !== "countdown") return;
+    if (countdown <= 0) {
+      // Kick off first dot
+      setDotIndex(0);
+      dotSamplesRef.current = [];
+      setCollected(0);
+      setDotVisible(true);
+      setPhase("settling");
+      setTimeout(() => {
+        collectingRef.current = true;
+        setPhase("running");
+      }, SETTLE_DELAY_MS);
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [phase, countdown]);
+
+  // ── Start flow ──────────────────────────────────────────────────────────────
   const startCalibration = () => {
     samplesRef.current = [];
     dotSamplesRef.current = [];
+    collectingRef.current = false;
     setCollected(0);
     setDotIndex(0);
-    setPhase("running");
-    startCamera();
+    setCountdown(COUNTDOWN_SECS);
+    setDotVisible(false);
+    startCamera(dims.w, dims.h);
+    setPhase("countdown");
   };
 
   const retry = () => {
+    collectingRef.current = false;
     stopCamera();
     setErrorMsg("");
     setPhase("idle");
   };
 
+  // ── Derived ─────────────────────────────────────────────────────────────────
+  const isRunningPhase = ["running", "settling", "transition"].includes(phase);
   const progress = collected / SAMPLES_PER_DOT;
-  const currentDot =
-    phase === "running" ? dotPixels(DOTS_NORM[dotIndex], dims.w, dims.h) : null;
+  const currentDotPos = isRunningPhase
+    ? dotPixels(DOTS_NORM[dotIndex], dims.w, dims.h)
+    : null;
+
+  const settling = phase === "settling";
 
   return (
     <div style={styles.root}>
+      {/* ── Background grid ── */}
       <svg style={styles.grid} width="100%" height="100%">
         <defs>
           <pattern
@@ -152,6 +232,7 @@ export default function Calibration() {
         <rect width="100%" height="100%" fill="url(#grid)" />
       </svg>
 
+      {/* ── IDLE panel ── */}
       {phase === "idle" && (
         <Panel>
           <StatusDot connected={isConnected} />
@@ -159,12 +240,16 @@ export default function Calibration() {
           <p style={styles.subtitle}>
             9 targets will appear one at a time.
             <br />
-            <strong>Look directly at each dot</strong> and hold until it fills.
+            <strong style={{ color: "#f0f0f0" }}>
+              Look directly at each dot
+            </strong>{" "}
+            and hold until it fills.
           </p>
           <ul style={styles.tipList}>
-            <li>Sit ~50–70 cm from your screen</li>
-            <li>Keep your head still</li>
-            <li>Good lighting on your face</li>
+            <li>Sit 50–70 cm from your screen</li>
+            <li>Keep your head still throughout</li>
+            <li>Good lighting on your face helps accuracy</li>
+            <li>Blink normally — blinks are filtered out</li>
           </ul>
           {!isConnected && (
             <p style={styles.warn}>
@@ -181,13 +266,30 @@ export default function Calibration() {
         </Panel>
       )}
 
-      {phase === "submitting" && (
+      {/* ── COUNTDOWN ── */}
+      {phase === "countdown" && (
         <Panel>
-          <Spinner />
-          <p style={styles.subtitle}>Fitting model…</p>
+          <div style={styles.countdownRing}>
+            <span style={styles.countdownNum}>{countdown}</span>
+          </div>
+          <p style={styles.subtitle}>
+            {countdown > 0
+              ? "Get ready… look at each dot as it appears"
+              : "Starting…"}
+          </p>
+          <FaceStatus detected={isFaceDetected} />
         </Panel>
       )}
 
+      {/* ── SUBMITTING ── */}
+      {phase === "submitting" && (
+        <Panel>
+          <Spinner />
+          <p style={styles.subtitle}>Fitting calibration model…</p>
+        </Panel>
+      )}
+
+      {/* ── DONE ── */}
       {phase === "done" && (
         <Panel>
           <div style={styles.checkmark}>✓</div>
@@ -205,6 +307,7 @@ export default function Calibration() {
         </Panel>
       )}
 
+      {/* ── ERROR ── */}
       {phase === "error" && (
         <Panel>
           <div style={styles.errorIcon}>✕</div>
@@ -216,11 +319,15 @@ export default function Calibration() {
         </Panel>
       )}
 
-      {phase === "running" && (
+      {/* ── RUNNING / SETTLING / TRANSITION — dot targets ── */}
+      {isRunningPhase && (
         <>
+          {/* Ghost dots for upcoming targets */}
           {DOTS_NORM.map((norm, i) => {
             const pos = dotPixels(norm, dims.w, dims.h);
             const done = i < dotIndex;
+            const current = i === dotIndex;
+            if (current) return null; // rendered separately
             return (
               <div
                 key={i}
@@ -229,18 +336,37 @@ export default function Calibration() {
                   left: pos.x,
                   top: pos.y,
                   background: done
-                    ? "rgba(99,255,180,0.25)"
-                    : "rgba(255,255,255,0.08)",
+                    ? "rgba(99,255,180,0.3)"
+                    : "rgba(255,255,255,0.07)",
+                  border: done
+                    ? "1px solid rgba(99,255,180,0.4)"
+                    : "1px solid rgba(255,255,255,0.12)",
                   transform: "translate(-50%,-50%)",
                 }}
               />
             );
           })}
-          {currentDot && (
-            <ActiveDot x={currentDot.x} y={currentDot.y} progress={progress} />
+
+          {/* Active calibration dot */}
+          {currentDotPos && (
+            <ActiveDot
+              x={currentDotPos.x}
+              y={currentDotPos.y}
+              progress={progress}
+              visible={dotVisible}
+              settling={settling}
+            />
           )}
-          <div style={styles.counter}>
-            Dot {dotIndex + 1} / {DOTS_NORM.length}
+
+          {/* HUD */}
+          <div style={styles.hud}>
+            <FaceStatus detected={isFaceDetected} compact />
+            <span style={styles.hudDot}>
+              Dot {dotIndex + 1} / {DOTS_NORM.length}
+            </span>
+            {settling && (
+              <span style={styles.hudHint}>● Hold your gaze here…</span>
+            )}
           </div>
         </>
       )}
@@ -248,14 +374,17 @@ export default function Calibration() {
   );
 }
 
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
 function Panel({ children }) {
   return <div style={styles.panel}>{children}</div>;
 }
 
-function ActiveDot({ x, y, progress }) {
-  const r = 20,
-    circ = 2 * Math.PI * r,
-    dash = circ * progress;
+function ActiveDot({ x, y, progress, visible, settling }) {
+  const r = 22;
+  const circ = 2 * Math.PI * r;
+  const dash = circ * progress;
+
   return (
     <div
       style={{
@@ -264,51 +393,101 @@ function ActiveDot({ x, y, progress }) {
         top: y,
         transform: "translate(-50%,-50%)",
         zIndex: 10,
+        opacity: visible ? 1 : 0,
+        transition: `opacity ${TRANSITION_MS * 0.6}ms ease`,
       }}
     >
-      <svg width={60} height={60} style={{ overflow: "visible" }}>
+      <svg width={80} height={80} style={{ overflow: "visible" }}>
+        {/* Outer pulse ring — only when settling (waiting for gaze) */}
+        {settling && (
+          <circle
+            cx={40}
+            cy={40}
+            r={36}
+            fill="none"
+            stroke="rgba(99,255,180,0.18)"
+            strokeWidth={2}
+          >
+            <animate
+              attributeName="r"
+              values="28;42;28"
+              dur="1.2s"
+              repeatCount="indefinite"
+            />
+            <animate
+              attributeName="opacity"
+              values="0.5;0;0.5"
+              dur="1.2s"
+              repeatCount="indefinite"
+            />
+          </circle>
+        )}
+
+        {/* Track ring */}
         <circle
-          cx={30}
-          cy={30}
-          r={28}
-          fill="none"
-          stroke="rgba(99,255,180,0.15)"
-          strokeWidth={2}
-        >
-          <animate
-            attributeName="r"
-            values="22;34;22"
-            dur="1.4s"
-            repeatCount="indefinite"
-          />
-          <animate
-            attributeName="opacity"
-            values="0.6;0;0.6"
-            dur="1.4s"
-            repeatCount="indefinite"
-          />
-        </circle>
-        <circle
-          cx={30}
-          cy={30}
+          cx={40}
+          cy={40}
           r={r}
           fill="none"
-          stroke="rgba(99,255,180,0.3)"
+          stroke="rgba(99,255,180,0.15)"
           strokeWidth={3}
         />
+
+        {/* Progress arc */}
         <circle
-          cx={30}
-          cy={30}
+          cx={40}
+          cy={40}
           r={r}
           fill="none"
           stroke="#63ffb4"
           strokeWidth={3}
           strokeDasharray={`${dash} ${circ}`}
           strokeLinecap="round"
-          transform="rotate(-90 30 30)"
-          style={{ transition: "stroke-dasharray 0.05s linear" }}
+          transform="rotate(-90 40 40)"
+          style={{ transition: "stroke-dasharray 0.06s linear" }}
         />
-        <circle cx={30} cy={30} r={6} fill="#63ffb4" />
+
+        {/* Cross-hair lines */}
+        <line
+          x1={40}
+          y1={25}
+          x2={40}
+          y2={33}
+          stroke="rgba(99,255,180,0.4)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
+        <line
+          x1={40}
+          y1={47}
+          x2={40}
+          y2={55}
+          stroke="rgba(99,255,180,0.4)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
+        <line
+          x1={25}
+          y1={40}
+          x2={33}
+          y2={40}
+          stroke="rgba(99,255,180,0.4)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
+        <line
+          x1={47}
+          y1={40}
+          x2={55}
+          y2={40}
+          stroke="rgba(99,255,180,0.4)"
+          strokeWidth={1.5}
+          strokeLinecap="round"
+        />
+
+        {/* Centre dot */}
+        <circle cx={40} cy={40} r={5} fill="#63ffb4" />
+        <circle cx={40} cy={40} r={2} fill="#0a0c10" />
       </svg>
     </div>
   );
@@ -335,9 +514,9 @@ function StatusDot({ connected }) {
       />
       <span
         style={{
-          fontSize: 12,
+          fontSize: 11,
           color: connected ? "#63ffb4" : "#ff6363",
-          letterSpacing: "0.08em",
+          letterSpacing: "0.1em",
         }}
       >
         {connected ? "CV SERVICE CONNECTED" : "CV SERVICE OFFLINE"}
@@ -346,13 +525,61 @@ function StatusDot({ connected }) {
   );
 }
 
+function FaceStatus({ detected, compact }) {
+  const color = detected ? "#63ffb4" : "#ffb347";
+  const label = detected ? "Face detected" : "No face — adjust your position";
+  if (compact) {
+    return (
+      <span
+        style={{
+          fontSize: 11,
+          color,
+          letterSpacing: "0.06em",
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+        }}
+      >
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            background: color,
+            display: "inline-block",
+          }}
+        />
+        {label}
+      </span>
+    );
+  }
+  return (
+    <div
+      style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}
+    >
+      <div
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: color,
+          boxShadow: `0 0 8px ${color}`,
+        }}
+      />
+      <span style={{ fontSize: 12, color, letterSpacing: "0.06em" }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
 function Spinner() {
   return (
-    <svg width={48} height={48} style={{ marginBottom: 16 }}>
+    <svg width={52} height={52} style={{ marginBottom: 16 }}>
       <circle
-        cx={24}
-        cy={24}
-        r={20}
+        cx={26}
+        cy={26}
+        r={22}
         fill="none"
         stroke="#63ffb4"
         strokeWidth={3}
@@ -362,7 +589,7 @@ function Spinner() {
         <animateTransform
           attributeName="transform"
           type="rotate"
-          values="0 24 24;360 24 24"
+          values="0 26 26;360 26 26"
           dur="0.9s"
           repeatCount="indefinite"
         />
@@ -371,6 +598,7 @@ function Spinner() {
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
 const styles = {
   root: {
     position: "fixed",
@@ -476,20 +704,54 @@ const styles = {
   },
   ghostDot: {
     position: "fixed",
-    width: 10,
-    height: 10,
+    width: 14,
+    height: 14,
     borderRadius: "50%",
     zIndex: 5,
-    transition: "background 0.3s",
+    transition: "background 0.4s, border 0.4s",
   },
-  counter: {
+  hud: {
     position: "fixed",
-    bottom: 32,
+    bottom: 28,
     left: "50%",
     transform: "translateX(-50%)",
-    color: "rgba(255,255,255,0.3)",
-    fontSize: 12,
-    letterSpacing: "0.1em",
+    display: "flex",
+    alignItems: "center",
+    gap: 20,
+    background: "rgba(0,0,0,0.45)",
+    border: "1px solid rgba(255,255,255,0.07)",
+    borderRadius: 40,
+    padding: "8px 20px",
     zIndex: 20,
+    backdropFilter: "blur(8px)",
+  },
+  hudDot: {
+    color: "rgba(255,255,255,0.35)",
+    fontSize: 11,
+    letterSpacing: "0.1em",
+  },
+  hudHint: {
+    color: "#ffb347",
+    fontSize: 11,
+    letterSpacing: "0.06em",
+    animation: "pulse 1.2s ease infinite",
+  },
+  countdownRing: {
+    width: 96,
+    height: 96,
+    borderRadius: "50%",
+    border: "2px solid rgba(99,255,180,0.3)",
+    background: "rgba(99,255,180,0.05)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 16,
+    boxShadow: "0 0 32px rgba(99,255,180,0.08)",
+  },
+  countdownNum: {
+    color: "#63ffb4",
+    fontSize: 48,
+    fontWeight: 700,
+    letterSpacing: "-0.04em",
   },
 };

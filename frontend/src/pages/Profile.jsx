@@ -1,78 +1,110 @@
 import { useAuth } from "../context/AuthContext";
 
-const Profile = () => {
+export default function Profile() {
   const { user, loading } = useAuth();
 
-  if (loading) {
+  if (loading) return <p style={s.muted}>Loading…</p>;
+  if (!user)
     return (
-      <div className="container-fluid">
-        <div className="text-muted">Loading profile...</div>
-      </div>
+      <p style={{ color: "#ff6363", fontSize: 13 }}>Failed to load profile</p>
     );
-  }
-
-  if (!user) {
-    return (
-      <div className="container-fluid">
-        <div className="text-danger">Failed to load user profile</div>
-      </div>
-    );
-  }
 
   return (
-    <div className="container-fluid">
-      {/* Header */}
-      <div className="mb-4">
-        <h3 className="fw-bold">Profile</h3>
-        <p className="text-muted mb-0">Manage your account information</p>
+    <div style={s.card}>
+      {/* Avatar row */}
+      <div style={s.avatarRow}>
+        <div style={s.avatar}>{user.username?.charAt(0).toUpperCase()}</div>
+        <div>
+          <div style={s.username}>{user.username}</div>
+          <span style={s.badge}>Active</span>
+        </div>
       </div>
 
-      {/* Profile card */}
-      <div className="row justify-content-center">
-        <div className="col-12 col-md-6">
-          <div className="card shadow-sm border-0">
-            <div className="card-body p-4">
-              {/* Avatar */}
-              <div className="text-center mb-4">
-                <div
-                  className="rounded-circle bg-secondary text-white d-flex align-items-center justify-content-center mx-auto"
-                  style={{
-                    width: "80px",
-                    height: "80px",
-                    fontSize: "28px",
-                  }}
-                >
-                  {user.username?.charAt(0).toUpperCase()}
-                </div>
-              </div>
+      <div style={s.divider} />
 
-              {/* User info */}
-              <div className="mb-3">
-                <label className="form-label text-muted">Username</label>
-                <div className="form-control bg-light">{user.username}</div>
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label text-muted">Email</label>
-                <div className="form-control bg-light">
-                  {user.email || "Not provided"}
-                </div>
-              </div>
-
-              <div className="mb-3">
-                <label className="form-label text-muted">User ID</label>
-                <div className="form-control bg-light">{user.id}</div>
-              </div>
-
-              <div className="text-center mt-3">
-                <span className="badge bg-success">Active</span>
-              </div>
-            </div>
-          </div>
-        </div>
+      {/* Fields */}
+      <div style={s.fields}>
+        <InfoRow label="Username" value={user.username} />
+        <InfoRow label="Email" value={user.email || "Not provided"} />
+        <InfoRow label="User ID" value={user.id} mono />
       </div>
     </div>
   );
-};
+}
 
-export default Profile;
+function InfoRow({ label, value, mono }) {
+  return (
+    <div style={s.row}>
+      <span style={s.rowLabel}>{label}</span>
+      <span style={{ ...s.rowVal, fontFamily: mono ? "monospace" : "inherit" }}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+const s = {
+  card: {
+    background: "rgba(255,255,255,0.02)",
+    border: "1px solid rgba(255,255,255,0.06)",
+    borderRadius: 14,
+    padding: "28px 32px",
+    maxWidth: 460,
+  },
+  avatarRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 16,
+    marginBottom: 24,
+  },
+  avatar: {
+    width: 52,
+    height: 52,
+    borderRadius: "50%",
+    background: "rgba(99,255,180,0.08)",
+    border: "1.5px solid rgba(99,255,180,0.25)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    fontSize: 20,
+    fontWeight: 700,
+    color: "#63ffb4",
+  },
+  username: {
+    fontSize: 16,
+    fontWeight: 600,
+    color: "#f0f0f0",
+    marginBottom: 4,
+  },
+  badge: {
+    fontSize: 10,
+    color: "#63ffb4",
+    background: "rgba(99,255,180,0.08)",
+    border: "1px solid rgba(99,255,180,0.2)",
+    borderRadius: 4,
+    padding: "2px 8px",
+    letterSpacing: "0.06em",
+  },
+  divider: {
+    height: 1,
+    background: "rgba(255,255,255,0.05)",
+    margin: "4px 0 20px",
+  },
+  fields: { display: "flex", flexDirection: "column", gap: 10 },
+  row: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 3,
+    padding: "10px 12px",
+    background: "rgba(255,255,255,0.02)",
+    borderRadius: 7,
+  },
+  rowLabel: {
+    fontSize: 10,
+    color: "rgba(255,255,255,0.22)",
+    letterSpacing: "0.1em",
+    textTransform: "uppercase",
+  },
+  rowVal: { fontSize: 13, color: "#f0f0f0" },
+  muted: { color: "rgba(255,255,255,0.3)", fontSize: 13 },
+};

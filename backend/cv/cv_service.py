@@ -12,8 +12,8 @@ from gaze_processor import process_frame
 DJANGO_API_BASE = "http://localhost:8000/api"
 DJANGO_WS_URL = "ws://localhost:8000/ws/gaze/"
 
-EMA_ALPHA = 0.08  # Very smooth — raise to 0.15 if it feels too laggy
-EAR_BLINK_THRESHOLD = 0.015  # EAR below this = eyes closed, suppress gaze
+EMA_ALPHA = 0.08
+EAR_BLINK_THRESHOLD = 0.015
 
 
 def fetch_calibration(token: str):
@@ -29,10 +29,11 @@ def fetch_calibration(token: str):
                 model = GazeCalibrationModel.from_dict(data["coefficients"])
                 print("[cv_service] calibration loaded OK")
                 return model
-            else:
-                print("[cv_service] no calibration on server yet")
+            print("[cv_service] no calibration saved yet")
         else:
-            print(f"[cv_service] calibration fetch HTTP {resp.status_code}")
+            print(
+                f"[cv_service] calibration fetch HTTP {resp.status_code} — re-run with a fresh token"
+            )
     except Exception as e:
         print("[cv_service] calibration fetch error:", e)
     return None
@@ -45,7 +46,6 @@ def open_camera(preferred=1):
         if ret:
             return cap
         cap.release()
-
     for i in range(5):
         if i == preferred:
             continue
@@ -56,11 +56,10 @@ def open_camera(preferred=1):
                 print(f"[cv] fallback camera {i}")
                 return cap
         cap.release()
-
     raise RuntimeError("No usable camera found")
 
 
-async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
+async def run_gaze_pipeline(token: str, default_w: int, default_h: int):
     ws_url = f"{DJANGO_WS_URL}?token={token}"
 
     fixation_detector = FixationDetector(dispersion_threshold=80)
@@ -69,7 +68,8 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
     cap = None
     camera_active = False
     cal_model = None
-
+    screen_w = default_w
+    screen_h = default_h
     smoothed_x: float | None = None
     smoothed_y: float | None = None
 
@@ -81,7 +81,6 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
                 try:
                     msg = json.loads(raw)
                     if msg.get("type") in ("start_camera", "stop_camera"):
-                        print(f"[cv_service] queued control: {msg.get('type')}")
                         await control_queue.put(msg)
                 except json.JSONDecodeError:
                     pass
@@ -89,7 +88,7 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
             pass
 
     async with websockets.connect(ws_url) as ws:
-        print("[cv_service] connected, waiting for start_camera...")
+        print("[cv_service] connected, waiting for start_camera…")
         recv_task = asyncio.create_task(receiver(ws))
 
         try:
@@ -99,25 +98,39 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
                     msg_type = msg.get("type")
 
                     if msg_type == "start_camera" and not camera_active:
-                        print("[cv_service] start_camera — opening camera")
+                        # Use viewport dimensions sent by the browser — these
+                        # exclude browser chrome and OS taskbar, matching the
+                        # actual area the gaze cursor overlays.
+                        screen_w = msg.get("screen_w", default_w)
+                        screen_h = msg.get("screen_h", default_h)
+                        print(f"[cv_service] viewport: {screen_w}×{screen_h}")
+
                         cal_model = fetch_calibration(token)
-                        cap = open_camera()
-                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                        camera_active = True
-                        smoothed_x = None
-                        smoothed_y = None
-                        print(
-                            "[cv_service] camera STARTED, calibrated:",
-                            cal_model is not None,
-                        )
+                        try:
+                            cap = open_camera()
+                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                            camera_active = True
+                            smoothed_x = smoothed_y = None
+                            print(
+                                f"[cv_service] camera STARTED — calibrated: {cal_model is not None}"
+                            )
+                        except RuntimeError as e:
+                            print(f"[cv_service] camera error: {e}")
+                            await ws.send(
+                                json.dumps(
+                                    {
+                                        "type": "camera_error",
+                                        "message": str(e),
+                                    }
+                                )
+                            )
 
                     elif msg_type == "stop_camera" and camera_active:
                         cap.release()
                         cap = None
                         camera_active = False
-                        smoothed_x = None
-                        smoothed_y = None
+                        smoothed_x = smoothed_y = None
                         print("[cv_service] camera STOPPED")
 
                 if not camera_active:
@@ -137,35 +150,30 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
                     continue
 
                 gaze_vec = result["features"]
-                ear = gaze_vec[5]  # Eye Aspect Ratio is the 6th feature
+                ear = gaze_vec[5]
 
-                # ── Blink suppression ────────────────────────────────────
-                # When EAR is very low the eye is closed — iris landmarks
-                # jump wildly so we suppress the packet entirely
+                # Suppress when eyes are closed — iris landmarks become unreliable
                 if ear < EAR_BLINK_THRESHOLD:
                     await ws.send(json.dumps({"face_detected": False}))
                     await asyncio.sleep(0.033)
                     continue
 
-                # ── Map to screen coords ─────────────────────────────────
+                # Map to screen coords using calibration or fallback
                 if cal_model is not None:
                     sx, sy = cal_model.map_gaze_to_screen(gaze_vec, screen_w, screen_h)
                 else:
                     sx = int((gaze_vec[0] + 1) / 2 * screen_w)
                     sy = int((gaze_vec[1] + 1) / 2 * screen_h)
 
-                # ── EMA smoothing ────────────────────────────────────────
+                # EMA smoothing
                 if smoothed_x is None:
-                    smoothed_x = float(sx)
-                    smoothed_y = float(sy)
+                    smoothed_x, smoothed_y = float(sx), float(sy)
                 else:
                     smoothed_x = EMA_ALPHA * sx + (1 - EMA_ALPHA) * smoothed_x
                     smoothed_y = EMA_ALPHA * sy + (1 - EMA_ALPHA) * smoothed_y
 
-                sx = int(smoothed_x)
-                sy = int(smoothed_y)
+                sx, sy = int(smoothed_x), int(smoothed_y)
 
-                # ── Fixation & dwell ─────────────────────────────────────
                 is_fixation, centroid = fixation_detector.update(sx, sy)
                 should_click, dwell_progress = dwell_timer.update(
                     centroid if is_fixation else None
@@ -200,6 +208,8 @@ async def run_gaze_pipeline(token: str, screen_w: int, screen_h: int):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--token", required=True)
+    # These are fallbacks only — actual values come from the browser via
+    # the start_camera message which knows the real viewport size
     parser.add_argument("--screen-w", type=int, default=1920)
     parser.add_argument("--screen-h", type=int, default=1080)
     args = parser.parse_args()
