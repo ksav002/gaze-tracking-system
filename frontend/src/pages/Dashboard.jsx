@@ -226,12 +226,10 @@ export default function Dashboard() {
             <div style={{ textAlign: "center" }}>
               <p style={s.idleText}>cv_service is not running</p>
               <div style={s.codeBlock}>
-                python cv_service.py --token &lt;your_token&gt;
+                cd backend/cv &amp;&amp; python cv_service.py
               </div>
               <p style={{ ...s.idleText, fontSize: 11, marginTop: 8 }}>
-                Get your token from{" "}
-                <code style={s.inlineCode}>localStorage.getItem("access")</code>{" "}
-                in the browser console
+                No token or screen-size arguments are required.
               </p>
             </div>
           ) : (

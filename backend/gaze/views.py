@@ -1,5 +1,9 @@
 import numpy as np
-from cv.calibration import GazeCalibrationModel
+from cv.calibration import (
+    GazeCalibrationModel,
+    cross_validated_error,
+    reject_target_outliers,
+)
 from gaze.serializers import RegisterSerializer
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -40,10 +44,31 @@ class CalibrationView(APIView):
         samples = serializer.validated_data["samples"]
 
         try:
-            gaze_coords = np.array([s["gaze"] for s in samples])
-            dot_coords = np.array([s["target"] for s in samples])
+            gaze_coords = np.array([s["gaze"] for s in samples], dtype=np.float64)
+            dot_coords = np.array([s["target"] for s in samples], dtype=np.float64)
+            gaze_coords, dot_coords = reject_target_outliers(gaze_coords, dot_coords)
+            if len(gaze_coords) < 80:
+                return Response(
+                    {"error": "Too many unstable samples were rejected. Please recalibrate."},
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+            if len(np.unique(dot_coords, axis=0)) < 12:
+                return Response(
+                    {"error": "At least 12 distinct calibration targets are required."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
-            cal = GazeCalibrationModel(degree=2)
+            quality = cross_validated_error(gaze_coords, dot_coords)
+            if quality["mean_error"] > 0.22:
+                return Response(
+                    {
+                        "error": "Calibration quality is too low. Improve lighting, keep your head steady, and retry.",
+                        "quality": quality,
+                    },
+                    status=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                )
+
+            cal = GazeCalibrationModel(alpha=8.0)
             cal.fit(gaze_coords, dot_coords)
 
             coefficients = cal.to_dict()
@@ -57,6 +82,8 @@ class CalibrationView(APIView):
                     "message": "Calibration saved.",
                     "created": created,
                     "updated_at": profile.updated_at,
+                    "quality": quality,
+                    "samples_used": len(gaze_coords),
                 },
                 status=status.HTTP_200_OK,
             )

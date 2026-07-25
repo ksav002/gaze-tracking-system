@@ -1,217 +1,178 @@
-import argparse
 import asyncio
 import json
 
 import cv2
-import requests
+import numpy as np
 import websockets
 from calibration import GazeCalibrationModel
 from fixation import DwellTimer, FixationDetector
 from gaze_processor import process_frame
 
-DJANGO_API_BASE = "http://localhost:8000/api"
-DJANGO_WS_URL = "ws://localhost:8000/ws/gaze/"
-
-EMA_ALPHA = 0.08
-EAR_BLINK_THRESHOLD = 0.015
-
-
-def fetch_calibration(token: str):
-    try:
-        resp = requests.get(
-            f"{DJANGO_API_BASE}/calibration/",
-            headers={"Authorization": f"Bearer {token}"},
-            timeout=3,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("calibrated"):
-                model = GazeCalibrationModel.from_dict(data["coefficients"])
-                print("[cv_service] calibration loaded OK")
-                return model
-            print("[cv_service] no calibration saved yet")
-        else:
-            print(
-                f"[cv_service] calibration fetch HTTP {resp.status_code} — re-run with a fresh token"
-            )
-    except Exception as e:
-        print("[cv_service] calibration fetch error:", e)
-    return None
+CV_WS_HOST = "127.0.0.1"
+CV_WS_PORT = 8765
+SLOW_ALPHA = 0.18
+FAST_ALPHA = 0.55
+EYE_OPEN_THRESHOLD = 0.12
 
 
 def open_camera(preferred=1):
     cap = cv2.VideoCapture(preferred, cv2.CAP_V4L2)
     if cap.isOpened():
-        ret, _ = cap.read()
-        if ret:
+        ok, _ = cap.read()
+        if ok:
             return cap
         cap.release()
-    for i in range(5):
-        if i == preferred:
+    for index in range(5):
+        if index == preferred:
             continue
-        cap = cv2.VideoCapture(i, cv2.CAP_V4L2)
+        cap = cv2.VideoCapture(index, cv2.CAP_V4L2)
         if cap.isOpened():
-            ret, _ = cap.read()
-            if ret:
-                print(f"[cv] fallback camera {i}")
+            ok, _ = cap.read()
+            if ok:
+                print(f"[cv_service] using fallback camera {index}")
                 return cap
         cap.release()
     raise RuntimeError("No usable camera found")
 
 
-async def run_gaze_pipeline(token: str, default_w: int, default_h: int):
-    ws_url = f"{DJANGO_WS_URL}?token={token}"
+def load_calibration(data):
+    if not data:
+        return None
+    try:
+        return GazeCalibrationModel.from_dict(data)
+    except (KeyError, TypeError, ValueError) as error:
+        print(f"[cv_service] calibration unavailable: {error}")
+        return None
 
+
+async def serve_browser(websocket):
+    """Process camera control for one local browser connection."""
+    print("[cv_service] browser connected")
+    control_queue = asyncio.Queue()
     fixation_detector = FixationDetector(dispersion_threshold=80)
     dwell_timer = DwellTimer()
-
     cap = None
     camera_active = False
-    cal_model = None
-    screen_w = default_w
-    screen_h = default_h
-    smoothed_x: float | None = None
-    smoothed_y: float | None = None
+    calibration = None
+    screen_w, screen_h = 1920, 1080
+    smoothed_x = smoothed_y = None
 
-    control_queue = asyncio.Queue()
-
-    async def receiver(ws):
+    async def receive_controls():
         try:
-            async for raw in ws:
+            async for raw in websocket:
                 try:
-                    msg = json.loads(raw)
-                    if msg.get("type") in ("start_camera", "stop_camera"):
-                        await control_queue.put(msg)
+                    message = json.loads(raw)
                 except json.JSONDecodeError:
-                    pass
+                    continue
+                if message.get("type") in ("start_camera", "stop_camera"):
+                    await control_queue.put(message)
         except websockets.ConnectionClosed:
             pass
 
-    async with websockets.connect(ws_url) as ws:
-        print("[cv_service] connected, waiting for start_camera…")
-        recv_task = asyncio.create_task(receiver(ws))
+    receiver = asyncio.create_task(receive_controls())
+    try:
+        while True:
+            if receiver.done() and control_queue.empty():
+                break
 
-        try:
-            while True:
-                while not control_queue.empty():
-                    msg = control_queue.get_nowait()
-                    msg_type = msg.get("type")
-
-                    if msg_type == "start_camera" and not camera_active:
-                        # Use viewport dimensions sent by the browser — these
-                        # exclude browser chrome and OS taskbar, matching the
-                        # actual area the gaze cursor overlays.
-                        screen_w = msg.get("screen_w", default_w)
-                        screen_h = msg.get("screen_h", default_h)
-                        print(f"[cv_service] viewport: {screen_w}×{screen_h}")
-
-                        cal_model = fetch_calibration(token)
-                        try:
-                            cap = open_camera()
-                            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                            camera_active = True
-                            smoothed_x = smoothed_y = None
-                            print(
-                                f"[cv_service] camera STARTED — calibrated: {cal_model is not None}"
-                            )
-                        except RuntimeError as e:
-                            print(f"[cv_service] camera error: {e}")
-                            await ws.send(
-                                json.dumps(
-                                    {
-                                        "type": "camera_error",
-                                        "message": str(e),
-                                    }
-                                )
-                            )
-
-                    elif msg_type == "stop_camera" and camera_active:
-                        cap.release()
-                        cap = None
-                        camera_active = False
+            while not control_queue.empty():
+                message = control_queue.get_nowait()
+                if message["type"] == "start_camera" and not camera_active:
+                    screen_w = max(1, int(message.get("screen_w", 1920)))
+                    screen_h = max(1, int(message.get("screen_h", 1080)))
+                    calibration = load_calibration(message.get("calibration"))
+                    try:
+                        cap = open_camera()
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                        camera_active = True
                         smoothed_x = smoothed_y = None
-                        print("[cv_service] camera STOPPED")
+                        fixation_detector.reset()
+                        print(
+                            f"[cv_service] camera started at viewport "
+                            f"{screen_w}x{screen_h}; calibrated={calibration is not None}"
+                        )
+                    except RuntimeError as error:
+                        await websocket.send(
+                            json.dumps({"type": "camera_error", "message": str(error)})
+                        )
+                elif message["type"] == "stop_camera" and camera_active:
+                    cap.release()
+                    cap = None
+                    camera_active = False
+                    smoothed_x = smoothed_y = None
+                    print("[cv_service] camera stopped")
 
-                if not camera_active:
-                    await asyncio.sleep(0.05)
-                    continue
+            if not camera_active:
+                await asyncio.sleep(0.03)
+                continue
 
-                ret, frame = cap.read()
-                if not ret:
-                    await asyncio.sleep(0.01)
-                    continue
-
-                result = process_frame(frame)
-
-                if result is None:
-                    await ws.send(json.dumps({"face_detected": False}))
-                    await asyncio.sleep(0.033)
-                    continue
-
-                gaze_vec = result["features"]
-                ear = gaze_vec[5]
-
-                # Suppress when eyes are closed — iris landmarks become unreliable
-                if ear < EAR_BLINK_THRESHOLD:
-                    await ws.send(json.dumps({"face_detected": False}))
-                    await asyncio.sleep(0.033)
-                    continue
-
-                # Map to screen coords using calibration or fallback
-                if cal_model is not None:
-                    sx, sy = cal_model.map_gaze_to_screen(gaze_vec, screen_w, screen_h)
-                else:
-                    sx = int((gaze_vec[0] + 1) / 2 * screen_w)
-                    sy = int((gaze_vec[1] + 1) / 2 * screen_h)
-
-                # EMA smoothing
-                if smoothed_x is None:
-                    smoothed_x, smoothed_y = float(sx), float(sy)
-                else:
-                    smoothed_x = EMA_ALPHA * sx + (1 - EMA_ALPHA) * smoothed_x
-                    smoothed_y = EMA_ALPHA * sy + (1 - EMA_ALPHA) * smoothed_y
-
-                sx, sy = int(smoothed_x), int(smoothed_y)
-
-                is_fixation, centroid = fixation_detector.update(sx, sy)
-                should_click, dwell_progress = dwell_timer.update(
-                    centroid if is_fixation else None
-                )
-
-                packet = {
-                    "face_detected": True,
-                    "x": sx,
-                    "y": sy,
-                    "is_fixation": is_fixation,
-                    "dwell_progress": round(dwell_progress, 3),
-                    "should_click": should_click,
-                    "pitch": round(result["pitch"], 2),
-                    "yaw": round(result["yaw"], 2),
-                    "calibrated": cal_model is not None,
-                    "features": gaze_vec,
-                }
-
-                await ws.send(json.dumps(packet))
+            ok, frame = cap.read()
+            if not ok:
+                await asyncio.sleep(0.01)
+                continue
+            result = process_frame(frame)
+            if result is None or result["eye_openness"] < EYE_OPEN_THRESHOLD:
+                await websocket.send(json.dumps({"face_detected": False}))
                 await asyncio.sleep(0.033)
+                continue
 
-        finally:
-            recv_task.cancel()
-            try:
-                await recv_task
-            except asyncio.CancelledError:
-                pass
-            if cap is not None:
-                cap.release()
+            features = result["features"]
+            if calibration is not None:
+                sx, sy = calibration.map_gaze_to_screen(features, screen_w, screen_h)
+            else:
+                # Coordinates are not used during initial calibration.
+                sx, sy = screen_w // 2, screen_h // 2
+
+            if smoothed_x is None:
+                smoothed_x, smoothed_y = float(sx), float(sy)
+            else:
+                distance = np.hypot(sx - smoothed_x, sy - smoothed_y)
+                threshold = 0.08 * min(screen_w, screen_h)
+                alpha = FAST_ALPHA if distance > threshold else SLOW_ALPHA
+                smoothed_x = alpha * sx + (1 - alpha) * smoothed_x
+                smoothed_y = alpha * sy + (1 - alpha) * smoothed_y
+            sx, sy = int(smoothed_x), int(smoothed_y)
+
+            is_fixation, centroid = fixation_detector.update(sx, sy)
+            should_click, dwell_progress = dwell_timer.update(
+                centroid if is_fixation else None
+            )
+            await websocket.send(
+                json.dumps(
+                    {
+                        "face_detected": True,
+                        "x": sx,
+                        "y": sy,
+                        "is_fixation": is_fixation,
+                        "dwell_progress": round(dwell_progress, 3),
+                        "should_click": should_click,
+                        "pitch": round(result["pitch"], 2),
+                        "yaw": round(result["yaw"], 2),
+                        "calibrated": calibration is not None,
+                        "features": features,
+                    }
+                )
+            )
+            await asyncio.sleep(0.033)
+    except websockets.ConnectionClosed:
+        pass
+    finally:
+        receiver.cancel()
+        if cap is not None:
+            cap.release()
+        print("[cv_service] browser disconnected")
+
+
+async def main():
+    async with websockets.serve(serve_browser, CV_WS_HOST, CV_WS_PORT):
+        print(f"[cv_service] ready at ws://{CV_WS_HOST}:{CV_WS_PORT}")
+        print("[cv_service] open the web app and start calibration or tracking")
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--token", required=True)
-    # These are fallbacks only — actual values come from the browser via
-    # the start_camera message which knows the real viewport size
-    parser.add_argument("--screen-w", type=int, default=1920)
-    parser.add_argument("--screen-h", type=int, default=1080)
-    args = parser.parse_args()
-
-    asyncio.run(run_gaze_pipeline(args.token, args.screen_w, args.screen_h))
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n[cv_service] stopped")

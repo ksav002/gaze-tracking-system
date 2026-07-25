@@ -4,37 +4,20 @@ import { postCalibration } from "../api/gaze";
 import { useGazeSocket } from "../hooks/useGazeSocket";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const SAMPLES_PER_DOT = 30;
+const SAMPLES_PER_DOT = 24;
 const SETTLE_DELAY_MS = 800; // wait after dot appears before collecting
 const TRANSITION_MS = 500; // dot travel animation duration
 const COUNTDOWN_SECS = 3;
 
-const DOTS_NORM = [
-  [0.1, 0.1],
-  [0.5, 0.1],
-  [0.9, 0.1],
-  [0.1, 0.5],
-  [0.5, 0.5],
-  [0.9, 0.5],
-  [0.1, 0.9],
-  [0.5, 0.9],
-  [0.9, 0.9],
-];
+const TARGET_AXIS = [0.1, 0.37, 0.63, 0.9];
+const DOTS_NORM = TARGET_AXIS.flatMap((y, row) => {
+  const xs = row % 2 ? [...TARGET_AXIS].reverse() : TARGET_AXIS;
+  return xs.map((x) => [x, y]);
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function dotPixels(norm, w, h) {
   return { x: norm[0] * w, y: norm[1] * h };
-}
-
-function avg(samples) {
-  if (!samples.length) return [0, 0, 0, 0, 0, 0];
-  const len = samples[0].length;
-  const sum = new Array(len).fill(0);
-  for (const s of samples)
-    s.forEach((v, i) => {
-      sum[i] += v;
-    });
-  return sum.map((v) => v / samples.length);
 }
 
 function useDims() {
@@ -65,6 +48,7 @@ export default function Calibration() {
   const [collected, setCollected] = useState(0);
   const [countdown, setCountdown] = useState(COUNTDOWN_SECS);
   const [errorMsg, setErrorMsg] = useState("");
+  const [quality, setQuality] = useState(null);
   const [dotVisible, setDotVisible] = useState(false); // for fade-in
 
   // refs so effects always see current values without re-subscribing
@@ -88,7 +72,7 @@ export default function Calibration() {
     if (!rawMessage.face_detected) return;
 
     const gaze =
-      Array.isArray(rawMessage.features) && rawMessage.features.length === 6
+      Array.isArray(rawMessage.features) && rawMessage.features.length === 10
         ? rawMessage.features
         : null;
     if (!gaze) return;
@@ -105,10 +89,10 @@ export default function Calibration() {
     collectingRef.current = false;
 
     const idx = dotIndexRef.current;
-    const { x, y } = dotPixels(DOTS_NORM[idx], dims.w, dims.h);
+    const target = DOTS_NORM[idx];
     samplesRef.current = [
       ...samplesRef.current,
-      { gaze: avg(dotSamplesRef.current), target: [x, y] },
+      ...dotSamplesRef.current.map((gaze) => ({ gaze, target })),
     ];
 
     const next = idx + 1;
@@ -146,9 +130,10 @@ export default function Calibration() {
     async (samples) => {
       stopCamera();
       try {
-        await postCalibration(
+        const response = await postCalibration(
           samples.map((s) => ({ gaze: s.gaze, target: s.target })),
         );
+        setQuality(response.data.quality);
         setPhase("done");
       } catch (err) {
         const msg = err?.response?.data
@@ -190,6 +175,7 @@ export default function Calibration() {
     setDotIndex(0);
     setCountdown(COUNTDOWN_SECS);
     setDotVisible(false);
+    setQuality(null);
     startCamera(dims.w, dims.h);
     setPhase("countdown");
   };
@@ -198,6 +184,7 @@ export default function Calibration() {
     collectingRef.current = false;
     stopCamera();
     setErrorMsg("");
+    setQuality(null);
     setPhase("idle");
   };
 
@@ -238,7 +225,7 @@ export default function Calibration() {
           <StatusDot connected={isConnected} />
           <h1 style={styles.title}>Eye Calibration</h1>
           <p style={styles.subtitle}>
-            9 targets will appear one at a time.
+            16 targets will appear one at a time.
             <br />
             <strong style={{ color: "#f0f0f0" }}>
               Look directly at each dot
@@ -294,8 +281,12 @@ export default function Calibration() {
         <Panel>
           <div style={styles.checkmark}>✓</div>
           <h1 style={styles.title}>Calibration Complete</h1>
-          <p style={styles.subtitle}>Your gaze model has been saved.</p>
-          <button style={styles.btn} onClick={() => navigate("/dashboard")}>
+          <p style={styles.subtitle}>
+            Your gaze model has been saved.
+            {quality &&
+              ` Held-out error: ${Math.round(quality.mean_error * 100)}% of the screen diagonal.`}
+          </p>
+          <button style={styles.btn} onClick={() => navigate("/")}>
             Go to Dashboard
           </button>
           <button

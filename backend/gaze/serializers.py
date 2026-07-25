@@ -28,11 +28,35 @@ class CalibrationSerializer(serializers.ModelSerializer):
 
 class CalibrationInputSerializer(serializers.Serializer):
     """
-    Expects a list of 9 samples, each with:
-    - dot_x, dot_y: actual screen position of the calibration dot (0.0 to 1.0 normalized)
-    - gaze_x, gaze_y: averaged raw gaze coordinates from CV service
+    Expects raw samples from at least 12 calibration targets:
+    - target: normalised screen position in the 0..1 range
+    - gaze: ten eye/head features from the local CV service
     """
 
     samples = serializers.ListField(
-        child=serializers.DictField(), min_length=9, max_length=9
+        child=serializers.DictField(), min_length=80, max_length=1000
     )
+
+    def validate_samples(self, samples):
+        cleaned = []
+        for index, sample in enumerate(samples):
+            gaze, target = sample.get("gaze"), sample.get("target")
+            if not isinstance(gaze, list) or len(gaze) != 10:
+                raise serializers.ValidationError(
+                    f"Sample {index} must contain 10 gaze features."
+                )
+            if not isinstance(target, list) or len(target) != 2:
+                raise serializers.ValidationError(
+                    f"Sample {index} must contain a two-value target."
+                )
+            try:
+                gaze = [float(value) for value in gaze]
+                target = [float(value) for value in target]
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    f"Sample {index} contains non-numeric data."
+                )
+            if not all(0 <= value <= 1 for value in target):
+                raise serializers.ValidationError("Targets must be normalised to 0..1.")
+            cleaned.append({"gaze": gaze, "target": target})
+        return cleaned

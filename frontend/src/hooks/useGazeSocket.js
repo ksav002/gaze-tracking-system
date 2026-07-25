@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import api from "../api/client";
 
-const WS_BASE = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
-const WS_URL = `${WS_BASE}/ws/gaze/`;
+const BACKEND_WS_BASE = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
+const BACKEND_WS_URL = `${BACKEND_WS_BASE}/ws/gaze/`;
+const CV_WS_URL = import.meta.env.VITE_CV_WS_URL ?? "ws://127.0.0.1:8765";
 
 export function useGazeSocket() {
-  const [isConnected, setIsConnected] = useState(false);
+  const [backendConnected, setBackendConnected] = useState(false);
+  const [cvConnected, setCvConnected] = useState(false);
   const [gazePoint, setGazePoint] = useState({ x: 0, y: 0 });
   const [isFaceDetected, setIsFaceDetected] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
@@ -12,98 +15,147 @@ export function useGazeSocket() {
   const [shouldClick, setShouldClick] = useState(false);
   const [rawMessage, setRawMessage] = useState(null);
   const [cameraError, setCameraError] = useState("");
+  const backendRef = useRef(null);
+  const cvRef = useRef(null);
 
-  const wsRef = useRef(null);
-  const reconnectRef = useRef(null);
-
-  const sendMessage = useCallback((msg) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(msg));
-      return true;
-    }
-    return false;
+  const sendBackend = useCallback((message) => {
+    if (backendRef.current?.readyState !== WebSocket.OPEN) return false;
+    backendRef.current.send(JSON.stringify(message));
+    return true;
   }, []);
 
-  // Pass actual browser viewport so cv_service maps to the right space.
-  // window.innerWidth/Height is the renderable area excluding browser chrome
-  // and OS taskbar — matching what the gaze cursor overlays.
-  const startCamera = useCallback(
-    (w, h) => {
-      const vw = w ?? window.innerWidth;
-      const vh = h ?? window.innerHeight;
-      return sendMessage({ type: "start_camera", screen_w: vw, screen_h: vh });
-    },
-    [sendMessage],
-  );
-
-  const stopCamera = useCallback(
-    () => sendMessage({ type: "stop_camera" }),
-    [sendMessage],
-  );
-
-  const connect = useCallback(() => {
-    const token = localStorage.getItem("access");
-    if (!token) return;
-
-    const ws = new WebSocket(`${WS_URL}?token=${token}`);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      setIsConnected(true);
-      if (reconnectRef.current) {
-        clearTimeout(reconnectRef.current);
-        reconnectRef.current = null;
-      }
-    };
-
-    ws.onclose = () => {
-      setIsConnected(false);
-      setIsFaceDetected(false);
-      reconnectRef.current = setTimeout(connect, 2000);
-    };
-
-    ws.onerror = () => ws.close();
-
-    ws.onmessage = (e) => {
-      let data;
-      try {
-        data = JSON.parse(e.data);
-      } catch {
-        return;
-      }
-
-      if (data.type === "start_camera" || data.type === "stop_camera") return;
-
-      if (data.type === "camera_error") {
-        setCameraError(data.message || "Camera unavailable");
-        return;
-      }
-
-      // Clear any previous camera error on a successful gaze packet
-      setCameraError("");
-
-      setRawMessage(data);
-      setIsFaceDetected(!!data.face_detected);
-      setIsCalibrated(!!data.calibrated);
-
-      if (data.face_detected) {
-        setGazePoint({ x: data.x ?? 0, y: data.y ?? 0 });
-        setDwellProgress(data.dwell_progress ?? 0);
-        setShouldClick(!!data.should_click);
-      }
-    };
+  const sendCv = useCallback((message) => {
+    if (cvRef.current?.readyState !== WebSocket.OPEN) return false;
+    cvRef.current.send(JSON.stringify(message));
+    return true;
   }, []);
 
   useEffect(() => {
-    connect();
+    let disposed = false;
+    let backendRetry;
+    let cvRetry;
+
+    function connectBackend() {
+      const token = localStorage.getItem("access");
+      if (!token || disposed) return;
+      const socket = new WebSocket(`${BACKEND_WS_URL}?token=${token}`);
+      backendRef.current = socket;
+      socket.onopen = () => setBackendConnected(true);
+      socket.onclose = () => {
+        setBackendConnected(false);
+        if (!disposed) backendRetry = setTimeout(connectBackend, 2000);
+      };
+      socket.onerror = () => socket.close();
+      socket.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Gaze packets originated locally and were already rendered. Django's
+          // echo only confirms persistence, so avoid processing each frame twice.
+          if (
+            data.type === "start_camera" ||
+            data.type === "stop_camera" ||
+            data.type === "gaze_data"
+          )
+            return;
+        } catch {
+          // Ignore malformed backend messages.
+        }
+      };
+    }
+
+    function connectCv() {
+      if (disposed) return;
+      const socket = new WebSocket(CV_WS_URL);
+      cvRef.current = socket;
+      socket.onopen = () => setCvConnected(true);
+      socket.onclose = () => {
+        setCvConnected(false);
+        setIsFaceDetected(false);
+        if (!disposed) cvRetry = setTimeout(connectCv, 2000);
+      };
+      socket.onerror = () => socket.close();
+      socket.onmessage = (event) => {
+        let data;
+        try {
+          data = JSON.parse(event.data);
+        } catch {
+          return;
+        }
+        if (data.type === "camera_error") {
+          setCameraError(data.message || "Camera unavailable");
+          return;
+        }
+
+        setCameraError("");
+        setRawMessage(data);
+        setIsFaceDetected(!!data.face_detected);
+        setIsCalibrated(!!data.calibrated);
+        if (data.face_detected) {
+          setGazePoint({ x: data.x ?? 0, y: data.y ?? 0 });
+          setDwellProgress(data.dwell_progress ?? 0);
+          setShouldClick(!!data.should_click);
+        }
+
+        // The browser owns the JWT, so it is the authenticated producer of
+        // gaze data stored by Django.
+        if (backendRef.current?.readyState === WebSocket.OPEN) {
+          backendRef.current.send(
+            JSON.stringify({ ...data, type: "gaze_data" }),
+          );
+        }
+      };
+    }
+
+    connectBackend();
+    connectCv();
     return () => {
-      if (reconnectRef.current) clearTimeout(reconnectRef.current);
-      wsRef.current?.close();
+      disposed = true;
+      clearTimeout(backendRetry);
+      clearTimeout(cvRetry);
+      backendRef.current?.close();
+      cvRef.current?.close();
     };
-  }, [connect]);
+  }, []);
+
+  const startCamera = useCallback(
+    async (width, height) => {
+      const screen_w = width ?? window.innerWidth;
+      const screen_h = height ?? window.innerHeight;
+      let calibration = null;
+      try {
+        const response = await api.get("/calibration/");
+        calibration = response.data.calibrated
+          ? response.data.coefficients
+          : null;
+      } catch {
+        calibration = null;
+      }
+      const backendStarted = sendBackend({
+        type: "start_camera",
+        screen_w,
+        screen_h,
+      });
+      const cvStarted = sendCv({
+        type: "start_camera",
+        screen_w,
+        screen_h,
+        calibration,
+      });
+      return backendStarted && cvStarted;
+    },
+    [sendBackend, sendCv],
+  );
+
+  const stopCamera = useCallback(() => {
+    const backendStopped = sendBackend({ type: "stop_camera" });
+    const cvStopped = sendCv({ type: "stop_camera" });
+    return backendStopped && cvStopped;
+  }, [sendBackend, sendCv]);
 
   return {
-    isConnected,
+    isConnected: backendConnected && cvConnected,
+    backendConnected,
+    cvConnected,
     gazePoint,
     isFaceDetected,
     isCalibrated,
@@ -113,6 +165,6 @@ export function useGazeSocket() {
     cameraError,
     startCamera,
     stopCamera,
-    sendMessage,
+    sendMessage: sendBackend,
   };
 }
