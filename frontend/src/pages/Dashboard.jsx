@@ -3,6 +3,7 @@ import { useAuth } from "../context/AuthContext";
 import { useGazeSocket } from "../hooks/useGazeSocket";
 import GazeCursor from "../components/GazeCursor";
 import api from "../api/client";
+import { getViewportSize } from "../utils/viewport";
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -21,10 +22,7 @@ export default function Dashboard() {
   const [cameraOn, setCameraOn] = useState(false);
   const [cameraStarting, setCameraStarting] = useState(false);
   const [startTimedOut, setStartTimedOut] = useState(false);
-  const [viewport, setViewport] = useState({
-    w: window.innerWidth,
-    h: window.innerHeight,
-  });
+  const [viewport, setViewport] = useState(getViewportSize);
   // True if the user has any saved calibration in the DB.
   // Checked on mount so returning users aren't blocked before
   // the WebSocket session has confirmed calibration.
@@ -38,8 +36,7 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    const update = () =>
-      setViewport({ w: window.innerWidth, h: window.innerHeight });
+    const update = () => setViewport(getViewportSize());
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
@@ -87,7 +84,8 @@ export default function Dashboard() {
       setCameraOn(false);
     } else {
       setStartTimedOut(false);
-      startCamera(window.innerWidth, window.innerHeight);
+      const { w, h } = getViewportSize();
+      startCamera(w, h);
       setCameraStarting(true);
     }
   };
@@ -112,12 +110,10 @@ export default function Dashboard() {
           style={{
             ...s.btn,
             background: cameraOn
-              ? "rgba(255,99,99,0.15)"
-              : "rgba(99,255,180,0.12)",
-            borderColor: cameraOn
-              ? "rgba(255,99,99,0.35)"
-              : "rgba(99,255,180,0.3)",
-            color: cameraOn ? "#ff6363" : "#63ffb4",
+              ? "var(--md-sys-color-error-container)"
+              : "var(--md-sys-color-tertiary)",
+            borderColor: "transparent",
+            color: cameraOn ? "var(--md-sys-color-error)" : "var(--md-sys-color-on-tertiary)",
             opacity: isConnected && (cameraOn || hasCalibration) ? 1 : 0.35,
             cursor:
               !isConnected || (!cameraOn && !hasCalibration) || cameraStarting
@@ -144,14 +140,14 @@ export default function Dashboard() {
 
       {/* Not connected warning */}
       {!isConnected && (
-        <Banner color="#ffb347">
+        <Banner color="var(--md-sys-color-warning)">
           CV service offline — run cv_service.py first
         </Banner>
       )}
 
       {/* Camera hardware error */}
       {cameraError && (
-        <Banner color="#ff6363">
+        <Banner color="var(--md-sys-color-error)">
           📷 Camera unavailable — {cameraError}. Check that no other application
           is using it.
         </Banner>
@@ -159,7 +155,7 @@ export default function Dashboard() {
 
       {/* cv_service connected but no packets arrived — wrong token or service crashed */}
       {startTimedOut && !cameraOn && !cameraError && (
-        <Banner color="#ffb347">
+        <Banner color="var(--md-sys-color-warning)">
           ⏱ No response from cv_service — check your token is valid and the
           service is running
         </Banner>
@@ -167,7 +163,7 @@ export default function Dashboard() {
 
       {/* Not calibrated — block start, show hint only for new users */}
       {!cameraOn && isConnected && hasCalibration === false && (
-        <Banner color="#ff6363">
+        <Banner color="var(--md-sys-color-error)">
           ⚠ Calibration required — go to <strong>Calibration</strong> first to
           set up eye tracking
         </Banner>
@@ -205,7 +201,7 @@ export default function Dashboard() {
                 rx="13"
                 ry="8"
                 stroke={
-                  isConnected ? "rgba(99,255,180,0.3)" : "rgba(255,255,255,0.1)"
+                  isConnected ? "rgba(67,198,179,0.3)" : "rgba(255,255,255,0.1)"
                 }
                 strokeWidth="1.5"
               />
@@ -215,7 +211,7 @@ export default function Dashboard() {
                 r="4"
                 fill={
                   isConnected
-                    ? "rgba(99,255,180,0.15)"
+                    ? "rgba(67,198,179,0.15)"
                     : "rgba(255,255,255,0.05)"
                 }
               />
@@ -228,13 +224,13 @@ export default function Dashboard() {
               <div style={s.codeBlock}>
                 cd backend/cv &amp;&amp; python cv_service.py
               </div>
-              <p style={{ ...s.idleText, fontSize: 11, marginTop: 8 }}>
+              <p style={{ ...s.idleText, fontSize: 13, marginTop: 8 }}>
                 No token or screen-size arguments are required.
               </p>
             </div>
           ) : (
             <p style={s.idleText}>
-              Press <strong style={{ color: "#63ffb4" }}>Start tracking</strong>{" "}
+              Press <strong style={{ color: "var(--md-sys-color-tertiary)" }}>Start tracking</strong>{" "}
               to begin a gaze session
             </p>
           )}
@@ -252,9 +248,9 @@ function Pill({ label, active }) {
         alignItems: "center",
         gap: 6,
         padding: "5px 12px",
-        borderRadius: 20,
-        border: `1px solid ${active ? "rgba(99,255,180,0.25)" : "rgba(255,255,255,0.06)"}`,
-        background: active ? "rgba(99,255,180,0.05)" : "transparent",
+        borderRadius: 8,
+        border: active ? "1px solid var(--md-sys-color-tertiary-container)" : "1px solid var(--md-sys-color-outline-variant)",
+        background: active ? "var(--md-sys-color-tertiary-container)" : "transparent",
       }}
     >
       <div
@@ -262,15 +258,15 @@ function Pill({ label, active }) {
           width: 5,
           height: 5,
           borderRadius: "50%",
-          background: active ? "#63ffb4" : "#2a2a2a",
-          boxShadow: active ? "0 0 6px #63ffb4" : "none",
+          background: active ? "var(--md-sys-color-tertiary)" : "#2a2a2a",
+          boxShadow: active ? "0 0 6px var(--md-sys-color-tertiary)" : "none",
         }}
       />
       <span
         style={{
-          fontSize: 10,
+          fontSize: 12,
           letterSpacing: "0.08em",
-          color: active ? "#63ffb4" : "rgba(255,255,255,0.2)",
+          color: active ? "var(--md-sys-color-on-tertiary-container)" : "var(--md-sys-color-on-surface-variant)",
         }}
       >
         {label.toUpperCase()}
@@ -292,12 +288,12 @@ function Banner({ color, children }) {
   return (
     <div
       style={{
-        fontSize: 11,
+        fontSize: 13,
         color,
-        background: `${color}10`,
-        border: `1px solid ${color}28`,
-        borderRadius: 7,
-        padding: "8px 14px",
+        background: "var(--md-sys-color-surface-container-high)",
+        border: "1px solid " + color,
+        borderRadius: 12,
+        padding: "14px 16px",
         marginBottom: 16,
       }}
     >
@@ -317,25 +313,26 @@ const s = {
   },
   pills: { display: "flex", gap: 8, flexWrap: "wrap" },
   btn: {
-    padding: "8px 20px",
-    border: "1px solid",
-    borderRadius: 8,
-    fontSize: 12,
-    fontWeight: 700,
+    padding: "12px 22px",
+    minHeight: 48,
+    border: "none",
+    borderRadius: 24,
+    fontSize: 14,
+    fontWeight: 500,
     cursor: "pointer",
     letterSpacing: "0.05em",
     fontFamily: "inherit",
     transition: "opacity 0.2s",
   },
   readout: {
-    background: "rgba(255,255,255,0.02)",
-    border: "1px solid rgba(255,255,255,0.06)",
+    background: "var(--md-sys-color-surface-container)",
+    border: "none",
     borderRadius: 12,
     padding: "20px 24px",
   },
   readoutHeader: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.2)",
+    fontSize: 12,
+    color: "var(--md-sys-color-on-surface-variant)",
     letterSpacing: "0.1em",
     textTransform: "uppercase",
     marginBottom: 16,
@@ -347,8 +344,8 @@ const s = {
   },
   metric: { display: "flex", flexDirection: "column", gap: 4 },
   metricLabel: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.25)",
+    fontSize: 12,
+    color: "rgba(255,255,255,0.62)",
     letterSpacing: "0.1em",
     textTransform: "uppercase",
   },
@@ -364,32 +361,32 @@ const s = {
     alignItems: "center",
     gap: 16,
     padding: "48px 24px",
-    border: "1px dashed rgba(255,255,255,0.06)",
+    border: "1px solid var(--md-sys-color-outline-variant)",
     borderRadius: 12,
   },
   idleEye: { opacity: 0.5 },
   idleText: {
-    fontSize: 13,
-    color: "rgba(255,255,255,0.3)",
+    fontSize: 15,
+    color: "var(--md-sys-color-on-surface-variant)",
     textAlign: "center",
     margin: 0,
   },
   codeBlock: {
     marginTop: 12,
     padding: "10px 16px",
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 7,
-    fontSize: 12,
-    color: "#63ffb4",
+    background: "var(--md-sys-color-surface-container-lowest)",
+    border: "1px solid var(--md-sys-color-outline-variant)",
+    borderRadius: 8,
+    fontSize: 14,
+    color: "var(--md-sys-color-tertiary)",
     fontFamily: "monospace",
     letterSpacing: "0.03em",
     userSelect: "all",
   },
   inlineCode: {
-    fontSize: 11,
-    color: "rgba(99,255,180,0.7)",
-    background: "rgba(99,255,180,0.08)",
+    fontSize: 13,
+    color: "rgba(67,198,179,0.7)",
+    background: "rgba(67,198,179,0.08)",
     padding: "1px 5px",
     borderRadius: 3,
     fontFamily: "monospace",

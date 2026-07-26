@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { postCalibration } from "../api/gaze";
 import { useGazeSocket } from "../hooks/useGazeSocket";
+import { getViewportSize } from "../utils/viewport";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const SAMPLES_PER_DOT = 24;
@@ -21,13 +22,9 @@ function dotPixels(norm, w, h) {
 }
 
 function useDims() {
-  const [dims, setDims] = useState({
-    w: window.innerWidth,
-    h: window.innerHeight,
-  });
+  const [dims, setDims] = useState(getViewportSize);
   useEffect(() => {
-    const handler = () =>
-      setDims({ w: window.innerWidth, h: window.innerHeight });
+    const handler = () => setDims(getViewportSize());
     window.addEventListener("resize", handler);
     return () => window.removeEventListener("resize", handler);
   }, []);
@@ -180,6 +177,12 @@ export default function Calibration() {
     setPhase("countdown");
   };
 
+  const exitCalibration = () => {
+    collectingRef.current = false;
+    stopCamera();
+    navigate("/");
+  };
+
   const retry = () => {
     collectingRef.current = false;
     stopCamera();
@@ -199,6 +202,15 @@ export default function Calibration() {
 
   return (
     <div style={styles.root}>
+      <button
+        type="button"
+        style={styles.exitBtn}
+        onClick={exitCalibration}
+        aria-label="Exit calibration and return to dashboard"
+      >
+        <span aria-hidden="true">←</span> Exit calibration
+      </button>
+
       {/* ── Background grid ── */}
       <svg style={styles.grid} width="100%" height="100%">
         <defs>
@@ -227,7 +239,7 @@ export default function Calibration() {
           <p style={styles.subtitle}>
             16 targets will appear one at a time.
             <br />
-            <strong style={{ color: "#f0f0f0" }}>
+            <strong style={{ color: "var(--md-sys-color-on-surface)" }}>
               Look directly at each dot
             </strong>{" "}
             and hold until it fills.
@@ -327,16 +339,24 @@ export default function Calibration() {
                   left: pos.x,
                   top: pos.y,
                   background: done
-                    ? "rgba(99,255,180,0.3)"
+                    ? "rgba(139,147,255,0.3)"
                     : "rgba(255,255,255,0.07)",
                   border: done
-                    ? "1px solid rgba(99,255,180,0.4)"
+                    ? "1px solid rgba(139,147,255,0.4)"
                     : "1px solid rgba(255,255,255,0.12)",
                   transform: "translate(-50%,-50%)",
                 }}
               />
             );
           })}
+
+          {/* Direction cue appears only while moving to the next target */}
+          {settling && dotIndex > 0 && currentDotPos && (
+            <DirectionGuide
+              from={dotPixels(DOTS_NORM[dotIndex - 1], dims.w, dims.h)}
+              to={currentDotPos}
+            />
+          )}
 
           {/* Active calibration dot */}
           {currentDotPos && (
@@ -371,6 +391,34 @@ function Panel({ children }) {
   return <div style={styles.panel}>{children}</div>;
 }
 
+function DirectionGuide({ from, to }) {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const distance = Math.hypot(dx, dy) || 1;
+  const inset = Math.min(52, distance * 0.2);
+  const ux = dx / distance;
+  const uy = dy / distance;
+  const startX = from.x + ux * inset;
+  const startY = from.y + uy * inset;
+  const length = Math.max(0, distance - inset * 2);
+  const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+  return (
+    <div
+      aria-hidden="true"
+      style={{
+        ...styles.directionGuide,
+        left: startX,
+        top: startY,
+        width: length,
+        transform: "rotate(" + angle + "deg)",
+      }}
+    >
+      <span style={styles.directionArrow}>➤</span>
+    </div>
+  );
+}
+
 function ActiveDot({ x, y, progress, visible, settling }) {
   const r = 22;
   const circ = 2 * Math.PI * r;
@@ -396,7 +444,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
             cy={40}
             r={36}
             fill="none"
-            stroke="rgba(99,255,180,0.18)"
+            stroke="rgba(139,147,255,0.18)"
             strokeWidth={2}
           >
             <animate
@@ -420,7 +468,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           cy={40}
           r={r}
           fill="none"
-          stroke="rgba(99,255,180,0.15)"
+          stroke="rgba(139,147,255,0.15)"
           strokeWidth={3}
         />
 
@@ -430,7 +478,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           cy={40}
           r={r}
           fill="none"
-          stroke="#63ffb4"
+          stroke="var(--md-sys-color-primary)"
           strokeWidth={3}
           strokeDasharray={`${dash} ${circ}`}
           strokeLinecap="round"
@@ -444,7 +492,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           y1={25}
           x2={40}
           y2={33}
-          stroke="rgba(99,255,180,0.4)"
+          stroke="rgba(139,147,255,0.4)"
           strokeWidth={1.5}
           strokeLinecap="round"
         />
@@ -453,7 +501,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           y1={47}
           x2={40}
           y2={55}
-          stroke="rgba(99,255,180,0.4)"
+          stroke="rgba(139,147,255,0.4)"
           strokeWidth={1.5}
           strokeLinecap="round"
         />
@@ -462,7 +510,7 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           y1={40}
           x2={33}
           y2={40}
-          stroke="rgba(99,255,180,0.4)"
+          stroke="rgba(139,147,255,0.4)"
           strokeWidth={1.5}
           strokeLinecap="round"
         />
@@ -471,14 +519,14 @@ function ActiveDot({ x, y, progress, visible, settling }) {
           y1={40}
           x2={55}
           y2={40}
-          stroke="rgba(99,255,180,0.4)"
+          stroke="rgba(139,147,255,0.4)"
           strokeWidth={1.5}
           strokeLinecap="round"
         />
 
         {/* Centre dot */}
-        <circle cx={40} cy={40} r={5} fill="#63ffb4" />
-        <circle cx={40} cy={40} r={2} fill="#0a0c10" />
+        <circle cx={40} cy={40} r={5} fill="var(--md-sys-color-primary)" />
+        <circle cx={40} cy={40} r={2} fill="var(--md-sys-color-surface)" />
       </svg>
     </div>
   );
@@ -499,14 +547,14 @@ function StatusDot({ connected }) {
           width: 8,
           height: 8,
           borderRadius: "50%",
-          background: connected ? "#63ffb4" : "#ff6363",
-          boxShadow: connected ? "0 0 8px #63ffb4" : "0 0 8px #ff6363",
+          background: connected ? "var(--md-sys-color-tertiary)" : "var(--md-sys-color-error)",
+          boxShadow: connected ? "0 0 8px var(--md-sys-color-tertiary)" : "0 0 8px var(--md-sys-color-error)",
         }}
       />
       <span
         style={{
-          fontSize: 11,
-          color: connected ? "#63ffb4" : "#ff6363",
+          fontSize: 13,
+          color: connected ? "var(--md-sys-color-tertiary)" : "var(--md-sys-color-error)",
           letterSpacing: "0.1em",
         }}
       >
@@ -517,13 +565,13 @@ function StatusDot({ connected }) {
 }
 
 function FaceStatus({ detected, compact }) {
-  const color = detected ? "#63ffb4" : "#ffb347";
+  const color = detected ? "var(--md-sys-color-tertiary)" : "var(--md-sys-color-warning)";
   const label = detected ? "Face detected" : "No face — adjust your position";
   if (compact) {
     return (
       <span
         style={{
-          fontSize: 11,
+          fontSize: 13,
           color,
           letterSpacing: "0.06em",
           display: "flex",
@@ -557,7 +605,7 @@ function FaceStatus({ detected, compact }) {
           boxShadow: `0 0 8px ${color}`,
         }}
       />
-      <span style={{ fontSize: 12, color, letterSpacing: "0.06em" }}>
+      <span style={{ fontSize: 14, color, letterSpacing: "0.06em" }}>
         {label}
       </span>
     </div>
@@ -572,7 +620,7 @@ function Spinner() {
         cy={26}
         r={22}
         fill="none"
-        stroke="#63ffb4"
+        stroke="var(--md-sys-color-primary)"
         strokeWidth={3}
         strokeDasharray="80 40"
         strokeLinecap="round"
@@ -594,19 +642,58 @@ const styles = {
   root: {
     position: "fixed",
     inset: 0,
-    background: "#0a0c10",
-    fontFamily: "'DM Mono','Fira Mono',monospace",
+    background: "var(--md-sys-color-surface)",
+    fontFamily: "Roboto, system-ui, sans-serif",
     overflow: "hidden",
+    zIndex: 10000,
+    isolation: "isolate",
+  },
+  exitBtn: {
+    position: "fixed",
+    top: 16,
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 30,
+    minHeight: 48,
+    padding: "0 16px",
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    border: "1px solid var(--md-sys-color-outline)",
+    borderRadius: 24,
+    background: "var(--md-sys-color-surface-container-high)",
+    color: "var(--md-sys-color-primary)",
+    fontFamily: "inherit",
+    fontSize: 14,
+    fontWeight: 500,
+    cursor: "pointer",
+    backdropFilter: "blur(8px)",
   },
   grid: { position: "absolute", inset: 0, pointerEvents: "none" },
+  directionGuide: {
+    position: "fixed",
+    zIndex: 7,
+    height: 2,
+    borderTop: "2px dashed rgba(139,147,255,0.48)",
+    transformOrigin: "left center",
+    pointerEvents: "none",
+  },
+  directionArrow: {
+    position: "absolute",
+    right: -8,
+    top: -12,
+    color: "var(--md-sys-color-primary)",
+    fontSize: 20,
+    lineHeight: 1,
+  },
   panel: {
     position: "absolute",
     top: "50%",
     left: "50%",
     transform: "translate(-50%,-50%)",
-    background: "rgba(255,255,255,0.03)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 16,
+    background: "var(--md-sys-color-surface-container-high)",
+    border: "none",
+    borderRadius: 28,
     padding: "48px 56px",
     minWidth: 380,
     maxWidth: 480,
@@ -618,38 +705,39 @@ const styles = {
     zIndex: 20,
   },
   title: {
-    color: "#f0f0f0",
+    color: "var(--md-sys-color-on-surface)",
     fontSize: 26,
-    fontWeight: 600,
+    fontWeight: 500,
     margin: 0,
     letterSpacing: "-0.02em",
     textAlign: "center",
   },
   subtitle: {
-    color: "rgba(255,255,255,0.5)",
-    fontSize: 14,
+    color: "var(--md-sys-color-on-surface-variant)",
+    fontSize: 16,
     lineHeight: 1.7,
     textAlign: "center",
     margin: 0,
   },
   tipList: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 13,
+    color: "var(--md-sys-color-on-surface-variant)",
+    fontSize: 15,
     lineHeight: 2,
     paddingLeft: 18,
     margin: "4px 0",
     alignSelf: "flex-start",
   },
-  warn: { color: "#ffb347", fontSize: 12, textAlign: "center", margin: 0 },
+  warn: { color: "var(--md-sys-color-warning)", fontSize: 14, textAlign: "center", margin: 0 },
   btn: {
     marginTop: 8,
+    minHeight: 48,
     padding: "12px 32px",
-    background: "#63ffb4",
-    color: "#0a0c10",
+    background: "var(--md-sys-color-primary)",
+    color: "var(--md-sys-color-on-primary)",
     border: "none",
-    borderRadius: 8,
-    fontSize: 14,
-    fontWeight: 700,
+    borderRadius: 24,
+    fontSize: 16,
+    fontWeight: 500,
     cursor: "pointer",
     letterSpacing: "0.04em",
     width: "100%",
@@ -657,20 +745,20 @@ const styles = {
   },
   btnSecondary: {
     background: "transparent",
-    border: "1px solid rgba(255,255,255,0.15)",
-    color: "rgba(255,255,255,0.5)",
+    border: "1px solid var(--md-sys-color-outline)",
+    color: "var(--md-sys-color-on-surface-variant)",
   },
   checkmark: {
     width: 56,
     height: 56,
     borderRadius: "50%",
-    background: "rgba(99,255,180,0.12)",
-    border: "1.5px solid #63ffb4",
+    background: "rgba(139,147,255,0.12)",
+    border: "1.5px solid var(--md-sys-color-primary)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontSize: 26,
-    color: "#63ffb4",
+    color: "var(--md-sys-color-primary)",
     marginBottom: 8,
   },
   errorIcon: {
@@ -678,17 +766,17 @@ const styles = {
     height: 56,
     borderRadius: "50%",
     background: "rgba(255,99,99,0.12)",
-    border: "1.5px solid #ff6363",
+    border: "1.5px solid var(--md-sys-color-error)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontSize: 26,
-    color: "#ff6363",
+    color: "var(--md-sys-color-error)",
     marginBottom: 8,
   },
   errorMsg: {
-    color: "#ff6363",
-    fontSize: 12,
+    color: "var(--md-sys-color-error)",
+    fontSize: 14,
     textAlign: "center",
     wordBreak: "break-all",
     margin: 0,
@@ -712,18 +800,18 @@ const styles = {
     background: "rgba(0,0,0,0.45)",
     border: "1px solid rgba(255,255,255,0.07)",
     borderRadius: 40,
-    padding: "8px 20px",
+    padding: "12px 22px",
     zIndex: 20,
     backdropFilter: "blur(8px)",
   },
   hudDot: {
-    color: "rgba(255,255,255,0.35)",
-    fontSize: 11,
+    color: "var(--md-sys-color-on-surface-variant)",
+    fontSize: 13,
     letterSpacing: "0.1em",
   },
   hudHint: {
-    color: "#ffb347",
-    fontSize: 11,
+    color: "var(--md-sys-color-warning)",
+    fontSize: 13,
     letterSpacing: "0.06em",
     animation: "pulse 1.2s ease infinite",
   },
@@ -731,18 +819,18 @@ const styles = {
     width: 96,
     height: 96,
     borderRadius: "50%",
-    border: "2px solid rgba(99,255,180,0.3)",
-    background: "rgba(99,255,180,0.05)",
+    border: "2px solid rgba(139,147,255,0.3)",
+    background: "rgba(139,147,255,0.05)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 16,
-    boxShadow: "0 0 32px rgba(99,255,180,0.08)",
+    boxShadow: "0 0 32px rgba(139,147,255,0.08)",
   },
   countdownNum: {
-    color: "#63ffb4",
+    color: "var(--md-sys-color-primary)",
     fontSize: 48,
-    fontWeight: 700,
+    fontWeight: 500,
     letterSpacing: "-0.04em",
   },
 };

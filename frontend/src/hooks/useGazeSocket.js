@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import api from "../api/client";
+import { getViewportSize } from "../utils/viewport";
 
 const BACKEND_WS_BASE = import.meta.env.VITE_WS_URL ?? "ws://localhost:8000";
 const BACKEND_WS_URL = `${BACKEND_WS_BASE}/ws/gaze/`;
@@ -119,8 +120,9 @@ export function useGazeSocket() {
 
   const startCamera = useCallback(
     async (width, height) => {
-      const screen_w = width ?? window.innerWidth;
-      const screen_h = height ?? window.innerHeight;
+      const viewport = getViewportSize();
+      const screen_w = width ?? viewport.w;
+      const screen_h = height ?? viewport.h;
       let calibration = null;
       try {
         const response = await api.get("/calibration/");

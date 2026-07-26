@@ -11,11 +11,11 @@ const EYE_SVG = (
       cy="16"
       rx="13"
       ry="8"
-      stroke="#63ffb4"
+      stroke="var(--md-sys-color-primary)"
       strokeWidth="1.5"
     />
-    <circle cx="16" cy="16" r="4" fill="#63ffb4" opacity="0.9" />
-    <circle cx="17.5" cy="14.5" r="1.2" fill="#0a0c10" />
+    <circle cx="16" cy="16" r="4" fill="var(--md-sys-color-primary)" opacity="0.9" />
+    <circle cx="17.5" cy="14.5" r="1.2" fill="var(--md-sys-color-surface)" />
   </svg>
 );
 
@@ -45,13 +45,13 @@ export function Login() {
       footer={
         <>
           No account?{" "}
-          <Link to="/register" style={linkStyle}>
+          <Link to="/register">
             Register
           </Link>
         </>
       }
     >
-      <form onSubmit={handleSubmit} style={formStyle}>
+      <form onSubmit={handleSubmit} className="form-stack">
         <Field
           label="Username"
           value={username}
@@ -115,13 +115,13 @@ export function Register() {
       footer={
         <>
           Have an account?{" "}
-          <Link to="/login" style={linkStyle}>
+          <Link to="/login">
             Sign in
           </Link>
         </>
       }
     >
-      <form onSubmit={handleSubmit} style={formStyle}>
+      <form onSubmit={handleSubmit} className="form-stack">
         <Field
           label="Username"
           value={form.username}
@@ -159,65 +159,37 @@ export function Register() {
 
 function AuthShell({ title, subtitle, footer, children }) {
   return (
-    <div style={shellStyle}>
-      {/* Background grid */}
-      <svg style={gridStyle} width="100%" height="100%">
-        <defs>
-          <pattern id="g" width="48" height="48" patternUnits="userSpaceOnUse">
-            <path
-              d="M 48 0 L 0 0 0 48"
-              fill="none"
-              stroke="rgba(99,255,180,0.04)"
-              strokeWidth="1"
-            />
-          </pattern>
-        </defs>
-        <rect width="100%" height="100%" fill="url(#g)" />
-      </svg>
-
-      {/* Ambient glow */}
-      <div style={glowStyle} />
-
-      <div style={cardStyle}>
-        {/* Logo */}
-        <div style={logoRowStyle}>
-          {EYE_SVG}
-          <span style={logoTextStyle}>GazeTrack</span>
+    <div className="auth-shell">
+      <section className="auth-story" aria-label="About GazeTrack">
+        <div className="brand">{EYE_SVG}<span>GazeTrack</span></div>
+        <div>
+          <p className="eyebrow">Private by design</p>
+          <h1>Precision that feels effortless.</h1>
+          <p>Calibrate, track, and understand visual attention through one focused workspace.</p>
         </div>
-
-        <div style={{ marginBottom: 28 }}>
-          <h1 style={titleStyle}>{title}</h1>
-          <p style={subtitleStyle}>{subtitle}</p>
+      </section>
+      <main className="auth-panel">
+        <div className="auth-card">
+          <h2>{title}</h2>
+          <p>{subtitle}</p>
+          {children}
+          <p className="auth-footer">{footer}</p>
         </div>
-
-        {children}
-
-        <p style={footerStyle}>{footer}</p>
-      </div>
+      </main>
     </div>
   );
 }
 
 function Field({ label, value, onChange, placeholder, type = "text" }) {
-  const [focused, setFocused] = useState(false);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <label style={labelStyle}>{label}</label>
+    <div className="field">
+      <label>{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required
-        onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        style={{
-          ...inputStyle,
-          borderColor: focused
-            ? "rgba(99,255,180,0.5)"
-            : "rgba(255,255,255,0.08)",
-          boxShadow: focused ? "0 0 0 3px rgba(99,255,180,0.08)" : "none",
-        }}
       />
     </div>
   );
@@ -225,7 +197,7 @@ function Field({ label, value, onChange, placeholder, type = "text" }) {
 
 function SubmitBtn({ loading, children }) {
   return (
-    <button type="submit" disabled={loading} style={btnStyle}>
+    <button type="submit" disabled={loading} className="button button-primary">
       {loading ? (
         <span
           style={{
@@ -257,7 +229,7 @@ function Spinner() {
         cy={8}
         r={6}
         fill="none"
-        stroke="#0a0c10"
+        stroke="var(--md-sys-color-on-primary)"
         strokeWidth={2}
         strokeDasharray="24 12"
         strokeLinecap="round"
@@ -265,102 +237,3 @@ function Spinner() {
     </svg>
   );
 }
-
-// ── Styles ───────────────────────────────────────────────────────────────────
-
-const shellStyle = {
-  position: "fixed",
-  inset: 0,
-  background: "#070910",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "center",
-  fontFamily: "'DM Mono','Fira Mono',monospace",
-  overflow: "hidden",
-};
-const gridStyle = { position: "absolute", inset: 0, pointerEvents: "none" };
-const glowStyle = {
-  position: "absolute",
-  width: 600,
-  height: 600,
-  borderRadius: "50%",
-  background:
-    "radial-gradient(circle, rgba(99,255,180,0.04) 0%, transparent 70%)",
-  top: "50%",
-  left: "50%",
-  transform: "translate(-50%,-50%)",
-  pointerEvents: "none",
-};
-const cardStyle = {
-  position: "relative",
-  zIndex: 1,
-  width: 380,
-  background: "rgba(255,255,255,0.025)",
-  border: "1px solid rgba(255,255,255,0.07)",
-  borderRadius: 20,
-  padding: "40px 36px",
-  backdropFilter: "blur(20px)",
-};
-const logoRowStyle = {
-  display: "flex",
-  alignItems: "center",
-  gap: 10,
-  marginBottom: 32,
-};
-const logoTextStyle = {
-  fontSize: 15,
-  fontWeight: 700,
-  color: "#63ffb4",
-  letterSpacing: "0.06em",
-};
-const titleStyle = {
-  fontSize: 22,
-  fontWeight: 600,
-  color: "#f0f0f0",
-  margin: 0,
-  letterSpacing: "-0.02em",
-};
-const subtitleStyle = {
-  fontSize: 12,
-  color: "rgba(255,255,255,0.3)",
-  margin: "6px 0 0",
-  letterSpacing: "0.03em",
-};
-const formStyle = { display: "flex", flexDirection: "column", gap: 16 };
-const labelStyle = {
-  fontSize: 11,
-  color: "rgba(255,255,255,0.4)",
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-};
-const inputStyle = {
-  background: "rgba(255,255,255,0.04)",
-  border: "1px solid",
-  borderRadius: 8,
-  padding: "10px 14px",
-  fontSize: 13,
-  color: "#f0f0f0",
-  fontFamily: "inherit",
-  outline: "none",
-  transition: "border-color 0.2s, box-shadow 0.2s",
-};
-const btnStyle = {
-  marginTop: 8,
-  padding: "12px",
-  background: "#63ffb4",
-  border: "none",
-  borderRadius: 8,
-  fontSize: 13,
-  fontWeight: 700,
-  color: "#070910",
-  cursor: "pointer",
-  letterSpacing: "0.05em",
-  transition: "opacity 0.2s",
-};
-const footerStyle = {
-  marginTop: 24,
-  textAlign: "center",
-  fontSize: 12,
-  color: "rgba(255,255,255,0.25)",
-};
-const linkStyle = { color: "#63ffb4", textDecoration: "none" };

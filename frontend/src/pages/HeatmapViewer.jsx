@@ -112,11 +112,11 @@ export default function HeatmapViewer() {
     });
 
   return (
-    <div style={styles.root}>
-      <div style={styles.sidebar}>
+    <div className="heatmap-shell" style={styles.root}>
+      <div className="session-panel" style={styles.sidebar}>
         <h3 style={styles.sideTitle}>Sessions</h3>
         {sessionsError && (
-          <p style={{ ...styles.empty, color: "#ff6363" }}>{sessionsError}</p>
+          <p style={{ ...styles.empty, color: "var(--md-sys-color-error)" }}>{sessionsError}</p>
         )}
         {!sessionsError && sessions.length === 0 && (
           <p style={styles.empty}>No sessions recorded yet.</p>
@@ -134,10 +134,15 @@ export default function HeatmapViewer() {
                   key={s.id}
                   style={{
                     ...styles.sessionBtn,
-                    borderColor:
-                      selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.08)",
-                    color:
-                      selected === s.id ? "#63ffb4" : "rgba(255,255,255,0.55)",
+                    background: selected === s.id
+                      ? "var(--md-sys-color-primary-container)"
+                      : "var(--md-sys-color-surface-container)",
+                    borderColor: selected === s.id
+                      ? "transparent"
+                      : "var(--md-sys-color-outline-variant)",
+                    color: selected === s.id
+                      ? "var(--md-sys-color-on-primary-container)"
+                      : "var(--md-sys-color-on-surface)",
                   }}
                   onClick={() => setSelected(s.id)}
                 >
@@ -166,7 +171,7 @@ export default function HeatmapViewer() {
         })()}
       </div>
 
-      <div style={styles.main}>
+      <div className="heatmap-main" style={styles.main}>
         {!selected && (
           <div style={styles.placeholder}>
             <p style={styles.placeholderText}>
@@ -200,7 +205,7 @@ export default function HeatmapViewer() {
                 style={{
                   width: "100%",
                   height: "100%",
-                  borderRadius: 8,
+                  borderRadius: 12,
                   border: "1px solid rgba(255,255,255,0.08)",
                   imageRendering: "pixelated",
                 }}
@@ -254,7 +259,7 @@ function Spinner() {
           cy={24}
           r={20}
           fill="none"
-          stroke="#63ffb4"
+          stroke="var(--md-sys-color-warning)"
           strokeWidth={3}
           strokeDasharray="80 40"
           strokeLinecap="round"
@@ -275,14 +280,16 @@ function Spinner() {
 const styles = {
   root: {
     display: "flex",
-    minHeight: "100vh",
-    background: "#0a0c10",
-    fontFamily: "'DM Mono','Fira Mono',monospace",
-    color: "#f0f0f0",
+    minHeight: 560,
+    background: "var(--md-sys-color-surface)",
+    fontFamily: "Roboto, system-ui, sans-serif",
+    color: "var(--md-sys-color-on-surface)",
   },
   sidebar: {
     width: 220,
-    borderRight: "1px solid rgba(255,255,255,0.06)",
+    borderRight: "1px solid var(--md-sys-color-outline-variant)",
+    background: "var(--md-sys-color-surface-container-low)",
+    borderRadius: 16,
     padding: "32px 16px",
     display: "flex",
     flexDirection: "column",
@@ -290,23 +297,24 @@ const styles = {
     flexShrink: 0,
   },
   sideTitle: {
-    fontSize: 13,
+    fontSize: 15,
     letterSpacing: "0.1em",
-    color: "rgba(255,255,255,0.3)",
+    color: "var(--md-sys-color-on-surface-variant)",
     margin: "0 0 16px",
   },
-  empty: { fontSize: 12, color: "rgba(255,255,255,0.2)", margin: 0 },
+  empty: { fontSize: 14, color: "var(--md-sys-color-on-surface-variant)", margin: 0 },
   footnote: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.15)",
+    fontSize: 12,
+    color: "var(--md-sys-color-outline)",
     margin: "12px 0 0",
     lineHeight: 1.5,
     fontStyle: "italic",
   },
   sessionBtn: {
-    background: "transparent",
+    minHeight: 52,
+    background: "var(--md-sys-color-surface-container)",
     border: "1px solid",
-    borderRadius: 8,
+    borderRadius: 12,
     padding: "10px 12px",
     cursor: "pointer",
     display: "flex",
@@ -316,7 +324,7 @@ const styles = {
     transition: "border-color 0.2s, color 0.2s",
   },
   sessionDate: { fontSize: 12 },
-  sessionDuration: { fontSize: 11, color: "rgba(255,255,255,0.3)" },
+  sessionDuration: { fontSize: 13, color: "var(--md-sys-color-on-surface-variant)" },
   main: {
     flex: 1,
     padding: "32px 40px",
@@ -330,20 +338,20 @@ const styles = {
     alignItems: "center",
     justifyContent: "center",
   },
-  placeholderText: { color: "rgba(255,255,255,0.15)", fontSize: 14 },
+  placeholderText: { color: "var(--md-sys-color-outline)", fontSize: 14 },
   meta: { display: "flex", gap: 12 },
   pill: {
-    background: "rgba(255,255,255,0.04)",
-    border: "1px solid rgba(255,255,255,0.08)",
-    borderRadius: 6,
+    background: "var(--md-sys-color-secondary-container)",
+    border: "none",
+    borderRadius: 8,
     padding: "6px 12px",
     display: "flex",
     gap: 8,
     alignItems: "center",
   },
   pillLabel: {
-    fontSize: 11,
-    color: "rgba(255,255,255,0.3)",
+    fontSize: 13,
+    color: "var(--md-sys-color-on-surface-variant)",
     letterSpacing: "0.08em",
   },
   pillVal: { fontSize: 13 },
@@ -351,11 +359,11 @@ const styles = {
     flex: 1,
     aspectRatio: "16/9",
     maxHeight: "60vh",
-    background: "rgba(255,255,255,0.02)",
-    borderRadius: 8,
+    background: "var(--md-sys-color-surface-container-lowest)",
+    borderRadius: 12,
   },
-  error: { color: "#ff6363", fontSize: 13 },
+  error: { color: "var(--md-sys-color-error)", fontSize: 13 },
   legend: { display: "flex", alignItems: "center", gap: 12 },
   legendBar: { flex: 1, height: 8, borderRadius: 4 },
-  legendLabel: { fontSize: 11, color: "rgba(255,255,255,0.3)" },
+  legendLabel: { fontSize: 13, color: "var(--md-sys-color-on-surface-variant)" },
 };

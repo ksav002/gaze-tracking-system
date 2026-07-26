@@ -23,7 +23,7 @@ export default function GazeCursor({ x, y, dwellProgress, visible }) {
           cy={24}
           r={r}
           fill="none"
-          stroke="rgba(99,255,180,0.2)"
+          stroke="rgba(67,198,179,0.2)"
           strokeWidth={2}
         />
         {/* dwell progress ring */}
@@ -32,7 +32,7 @@ export default function GazeCursor({ x, y, dwellProgress, visible }) {
           cy={24}
           r={r}
           fill="none"
-          stroke="#63ffb4"
+          stroke="var(--md-sys-color-tertiary)"
           strokeWidth={2}
           strokeDasharray={`${dash} ${circ}`}
           strokeLinecap="round"
@@ -40,7 +40,7 @@ export default function GazeCursor({ x, y, dwellProgress, visible }) {
           style={{ transition: "stroke-dasharray 0.05s linear" }}
         />
         {/* center dot */}
-        <circle cx={24} cy={24} r={3} fill="#63ffb4" />
+        <circle cx={24} cy={24} r={3} fill="var(--md-sys-color-tertiary)" />
       </svg>
     </div>
   );

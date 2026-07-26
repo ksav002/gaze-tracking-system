@@ -6,7 +6,7 @@ export default function Profile() {
   if (loading) return <p style={s.muted}>Loading…</p>;
   if (!user)
     return (
-      <p style={{ color: "#ff6363", fontSize: 13 }}>Failed to load profile</p>
+      <p style={{ color: "var(--md-sys-color-error)", fontSize: 13 }}>Failed to load profile</p>
     );
 
   return (
@@ -45,9 +45,9 @@ function InfoRow({ label, value, mono }) {
 
 const s = {
   card: {
-    background: "rgba(255,255,255,0.02)",
-    border: "1px solid rgba(255,255,255,0.06)",
-    borderRadius: 14,
+    background: "var(--md-sys-color-surface-container)",
+    border: "none",
+    borderRadius: 12,
     padding: "28px 32px",
     maxWidth: 460,
   },
@@ -61,33 +61,33 @@ const s = {
     width: 52,
     height: 52,
     borderRadius: "50%",
-    background: "rgba(99,255,180,0.08)",
-    border: "1.5px solid rgba(99,255,180,0.25)",
+    background: "var(--md-sys-color-primary-container)",
+    border: "none",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     fontSize: 20,
-    fontWeight: 700,
-    color: "#63ffb4",
+    fontWeight: 500,
+    color: "var(--md-sys-color-on-primary-container)",
   },
   username: {
     fontSize: 16,
     fontWeight: 600,
-    color: "#f0f0f0",
+    color: "var(--md-sys-color-on-surface)",
     marginBottom: 4,
   },
   badge: {
-    fontSize: 10,
-    color: "#63ffb4",
-    background: "rgba(99,255,180,0.08)",
-    border: "1px solid rgba(99,255,180,0.2)",
-    borderRadius: 4,
+    fontSize: 12,
+    color: "var(--md-sys-color-on-primary-container)",
+    background: "var(--md-sys-color-tertiary-container)",
+    border: "none",
+    borderRadius: 8,
     padding: "2px 8px",
     letterSpacing: "0.06em",
   },
   divider: {
     height: 1,
-    background: "rgba(255,255,255,0.05)",
+    background: "var(--md-sys-color-outline-variant)",
     margin: "4px 0 20px",
   },
   fields: { display: "flex", flexDirection: "column", gap: 10 },
@@ -96,15 +96,15 @@ const s = {
     flexDirection: "column",
     gap: 3,
     padding: "10px 12px",
-    background: "rgba(255,255,255,0.02)",
-    borderRadius: 7,
+    background: "var(--md-sys-color-surface-container-high)",
+    borderRadius: 12,
   },
   rowLabel: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.22)",
+    fontSize: 12,
+    color: "var(--md-sys-color-on-surface-variant)",
     letterSpacing: "0.1em",
     textTransform: "uppercase",
   },
-  rowVal: { fontSize: 13, color: "#f0f0f0" },
-  muted: { color: "rgba(255,255,255,0.3)", fontSize: 13 },
+  rowVal: { fontSize: 15, color: "var(--md-sys-color-on-surface)" },
+  muted: { color: "var(--md-sys-color-on-surface-variant)", fontSize: 13 },
 };
