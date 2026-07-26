@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections import deque
 
 import cv2
 import numpy as np
@@ -10,8 +11,10 @@ from gaze_processor import process_frame
 
 CV_WS_HOST = "127.0.0.1"
 CV_WS_PORT = 8765
-SLOW_ALPHA = 0.18
+SLOW_ALPHA = 0.10
 FAST_ALPHA = 0.55
+DEAD_ZONE_PX = 20
+MEDIAN_WINDOW = 5
 EYE_OPEN_THRESHOLD = 0.12
 
 
@@ -56,6 +59,7 @@ async def serve_browser(websocket):
     calibration = None
     screen_w, screen_h = 1920, 1080
     smoothed_x = smoothed_y = None
+    gaze_samples = deque(maxlen=MEDIAN_WINDOW)
 
     async def receive_controls():
         try:
@@ -87,6 +91,7 @@ async def serve_browser(websocket):
                         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                         camera_active = True
                         smoothed_x = smoothed_y = None
+                        gaze_samples.clear()
                         fixation_detector.reset()
                         print(
                             f"[cv_service] camera started at viewport "
@@ -101,6 +106,7 @@ async def serve_browser(websocket):
                     cap = None
                     camera_active = False
                     smoothed_x = smoothed_y = None
+                    gaze_samples.clear()
                     print("[cv_service] camera stopped")
 
             if not camera_active:
@@ -124,12 +130,18 @@ async def serve_browser(websocket):
                 # Coordinates are not used during initial calibration.
                 sx, sy = screen_w // 2, screen_h // 2
 
+            gaze_samples.append((sx, sy))
+            sx, sy = np.median(np.asarray(gaze_samples), axis=0)
+
             if smoothed_x is None:
                 smoothed_x, smoothed_y = float(sx), float(sy)
             else:
                 distance = np.hypot(sx - smoothed_x, sy - smoothed_y)
                 threshold = 0.08 * min(screen_w, screen_h)
-                alpha = FAST_ALPHA if distance > threshold else SLOW_ALPHA
+                if distance <= DEAD_ZONE_PX:
+                    alpha = 0.0
+                else:
+                    alpha = FAST_ALPHA if distance > threshold else SLOW_ALPHA
                 smoothed_x = alpha * sx + (1 - alpha) * smoothed_x
                 smoothed_y = alpha * sy + (1 - alpha) * smoothed_y
             sx, sy = int(smoothed_x), int(smoothed_y)
@@ -138,12 +150,13 @@ async def serve_browser(websocket):
             should_click, dwell_progress = dwell_timer.update(
                 centroid if is_fixation else None
             )
+            display_x, display_y = centroid if is_fixation else (sx, sy)
             await websocket.send(
                 json.dumps(
                     {
                         "face_detected": True,
-                        "x": sx,
-                        "y": sy,
+                        "x": int(round(display_x)),
+                        "y": int(round(display_y)),
                         "is_fixation": is_fixation,
                         "dwell_progress": round(dwell_progress, 3),
                         "should_click": should_click,

@@ -1,12 +1,10 @@
-import { useEffect, useRef, useState } from "react";
-import { useAuth } from "../context/AuthContext";
+import { useEffect, useState } from "react";
 import { useGazeSocket } from "../hooks/useGazeSocket";
-import GazeCursor from "../components/GazeCursor";
+import LiveGazeHeatmap from "../components/LiveGazeHeatmap";
 import api from "../api/client";
 import { getViewportSize } from "../utils/viewport";
 
 export default function Dashboard() {
-  const { user } = useAuth();
   const {
     isConnected,
     isFaceDetected,
@@ -92,10 +90,9 @@ export default function Dashboard() {
 
   return (
     <>
-      <GazeCursor
+      <LiveGazeHeatmap
         x={gazePoint.x}
         y={gazePoint.y}
-        dwellProgress={dwellProgress}
         visible={cameraOn && isFaceDetected}
       />
 
